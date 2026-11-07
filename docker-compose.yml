@@ -1,19 +1,17 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
     container_name: day-trading-db
     environment:
       POSTGRES_USER: trading_user
-      POSTGRES_PASSWORD: trading_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading_password}
       POSTGRES_DB: day_trading_bot
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U trading_user"]
+      test: ["CMD-SHELL", "pg_isready -U trading_user -d day_trading_bot"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -21,38 +19,34 @@ services:
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      args:
+        INSTALL_ML: ${INSTALL_ML:-false}
     container_name: day-trading-api
+    env_file: .env
     environment:
       FLASK_ENV: production
-      DATABASE_URL: postgresql://trading_user:trading_password@postgres:5432/day_trading_bot
-      ALPACA_API_KEY: ${ALPACA_API_KEY}
-      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY}
-      ALPACA_BASE_URL: https://paper-api.alpaca.markets
+      DATABASE_URL: postgresql://trading_user:${POSTGRES_PASSWORD:-trading_password}@postgres:5432/day_trading_bot
+      MODEL_PATH: /app/model_files/
     ports:
       - "5000:5000"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      - ./backend:/app
       - model_files:/app/model_files
-    command: gunicorn --bind 0.0.0.0:5000 --workers 4 app:app
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:5000/api}
     container_name: day-trading-ui
-    environment:
-      REACT_APP_API_URL: http://localhost:5000/api
     ports:
       - "3000:3000"
     depends_on:
       - backend
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+    restart: unless-stopped
 
 volumes:
   postgres_data:

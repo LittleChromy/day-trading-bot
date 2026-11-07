@@ -1,0 +1,2 @@
+# Optional: enables the neural-network model (the Random Forest works without it)
+tensorflow==2.16.2

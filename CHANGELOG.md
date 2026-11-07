@@ -1,5 +1,39 @@
 # Day Trading Bot - Changelog
 
+## [1.1.0] - 2026-11-07
+
+### Added
+- Trading engine (`trading_engine.py`): executes signals, attaches stop-loss/take-profit,
+  monitors positions, flattens before the close, logs every action to `bot_events`
+- Execution modes: `simulated` (local paper ledger) and `alpaca` (bracket orders); live
+  accounts refused unless `ALLOW_LIVE_TRADING=true`
+- Risk management (`risk_manager.py`): risk-based sizing, position cap, max open positions,
+  one position per symbol, daily loss limit, long-only by default
+- Walk-forward backtester and `/api/backtest/run`
+- Bot API (`/api/bot/*`): status, account, auto-trade toggle, run cycle, flatten, events, retrain, models
+- `POST /api/signals/<id>/execute`, `PUT /api/trades/cancel/<id>`
+- Analytics: per-strategy scorecard and cumulative P&L curve
+- Dashboard: Bot and Backtest tabs, working Execute Trade, trade logging form, live unrealized P&L
+- Automatic schema upgrade for databases created by 1.0.0
+- Offline pytest suite with a fake market-data source
+
+### Fixed
+- `gunicorn app:app` failed: `app.py` exposed no app object; now `app:create_app()`
+- Scheduler imported the uninstalled `schedule` package; now uses APScheduler
+- 4 gunicorn workers each started a scheduler; now one worker with threads
+- Scheduler stored strategy details with `str()` instead of JSON, breaking every later read
+- Alpaca bars were requested without a start date or data feed (empty outside market hours,
+  SIP errors on free accounts)
+- ML features shifted columns when a strategy didn't vote; now fixed-position features
+- Signal accuracy counted still-open trades as failures
+- A single agreeing strategy could produce a 100% confidence signal
+- RSI divided by zero on flat data; stochastic ignored bar highs/lows
+- `.env.example` missing at repo root (`start.sh` copies it); frontend API URL not passed at build time
+
+### Changed
+- TensorFlow is optional (`requirements-ml.txt`, `INSTALL_ML=true`)
+- Local runs default to SQLite when `DATABASE_URL` is unset
+
 ## [1.0.0] - 2026-06-30
 
 ### Added

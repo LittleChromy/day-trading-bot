@@ -1,294 +1,240 @@
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-import tensorflow as tf
-from tensorflow import keras
+"""
+Self-learning layer: learns which signals turned into profitable trades and
+uses that to adjust the confidence of new signals.
+
+TensorFlow is optional. If it is not installed the neural network is skipped
+and only the Random Forest is used.
+"""
 import logging
-import joblib
 import os
 from datetime import datetime
+
+import joblib
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
+from config import Config
 from models import db, Trade, Signal, MLModel
 
 logger = logging.getLogger(__name__)
 
+FEATURE_NAMES = [
+    'confidence', 'side', 'rsi', 'macd_hist_pct', 'bb_percent_b',
+    'ma_spread_pct', 'stoch_k', 'volume_ratio', 'momentum', 'agreeing_strategies',
+]
+MIN_SAMPLES_RF = 10
+MIN_SAMPLES_NN = 30
+
+
+def _keras():
+    try:
+        from tensorflow import keras  # noqa: WPS433 (optional heavy import)
+        return keras
+    except Exception:
+        return None
+
+
+def extract_features(strategy_details, confidence, signal_type='BUY', price=None):
+    """
+    Fixed-length feature vector. Every feature has its own slot with a neutral
+    default, so a missing strategy never shifts the other columns.
+    """
+    d = strategy_details or {}
+
+    def val(strategy, key, default):
+        v = d.get(strategy, {}).get(key)
+        return default if v is None else float(v)
+
+    side = 1.0 if signal_type == 'BUY' else -1.0
+    rsi = val('rsi', 'value', 50.0)
+
+    hist = val('macd', 'histogram', 0.0)
+    macd_hist_pct = hist / price * 100 if price else hist
+
+    upper, lower = val('bollinger_bands', 'upper', 0.0), val('bollinger_bands', 'lower', 0.0)
+    if price and upper > lower:
+        bb_b = (price - lower) / (upper - lower)
+    else:
+        bb_b = 0.5
+
+    short_ma, long_ma = val('moving_average', 'short_ma', 0.0), val('moving_average', 'long_ma', 0.0)
+    ma_spread = (short_ma - long_ma) / long_ma * 100 if long_ma else 0.0
+
+    agreeing = sum(1 for s in d.values() if isinstance(s, dict) and s.get('signal') == signal_type)
+
+    return [
+        float(confidence or 0.0), side, rsi, macd_hist_pct, bb_b, ma_spread,
+        val('stochastic', 'k_percent', 50.0), val('volume', 'ratio', 1.0),
+        val('momentum', 'value', 0.0), float(agreeing),
+    ]
+
+
 class MLTrainer:
-    """
-    Machine learning trainer that learns from trading results
-    and improves signal accuracy over time
-    """
-    
-    def __init__(self, model_path='model_files/'):
-        self.model_path = model_path
-        os.makedirs(model_path, exist_ok=True)
-        self.scaler = StandardScaler()
-    
+    """Trains models on closed trades that originated from signals"""
+
+    def __init__(self, model_path=None):
+        self.model_path = model_path or Config.MODEL_PATH
+        os.makedirs(self.model_path, exist_ok=True)
+
+    def _path(self, filename):
+        return os.path.join(self.model_path, filename)
+
     def prepare_training_data(self):
-        """
-        Prepare training data from closed trades and their corresponding signals
-        """
-        acted_signals = Signal.query.filter(Signal.acted_upon == True).all()
-        
-        X = []
-        y = []
-        
-        for signal in acted_signals:
-            if signal.trade_id:
-                trade = Trade.query.get(signal.trade_id)
-                if trade and trade.status == 'CLOSED':
-                    # Extract features from signal
-                    strategy_details = signal.get_strategy_details()
-                    features = self._extract_features(strategy_details, signal.confidence_score)
-                    
-                    # Label: 1 if profitable, 0 if not
-                    label = 1 if trade.profit_loss and trade.profit_loss > 0 else 0
-                    
-                    X.append(features)
-                    y.append(label)
-        
+        rows = (db.session.query(Signal, Trade)
+                .join(Trade, Signal.trade_id == Trade.id)
+                .filter(Signal.acted_upon.is_(True), Trade.status == 'CLOSED')
+                .all())
+        X, y = [], []
+        for signal, trade in rows:
+            X.append(extract_features(signal.get_strategy_details(), signal.base_confidence or signal.confidence_score,
+                                      signal.signal_type, signal.current_price))
+            y.append(1 if (trade.profit_loss or 0) > 0 else 0)
         if not X:
-            logger.warning("No training data available")
+            logger.info("No training data available yet")
             return None, None
-        
-        X = np.array(X)
-        y = np.array(y)
-        
-        return X, y
-    
-    def _extract_features(self, strategy_details, confidence):
-        """
-        Extract feature vector from strategy details
-        """
-        features = [confidence]
-        
-        # Extract individual strategy signals and values
-        if 'rsi' in strategy_details:
-            features.append(strategy_details['rsi']['value'])
-            features.append(1 if strategy_details['rsi']['signal'] == 'BUY' else 0)
-        
-        if 'macd' in strategy_details:
-            features.append(strategy_details['macd']['macd'])
-            features.append(strategy_details['macd']['histogram'])
-        
-        if 'bollinger_bands' in strategy_details:
-            features.append(strategy_details['bollinger_bands']['upper'])
-            features.append(strategy_details['bollinger_bands']['lower'])
-        
-        if 'moving_average' in strategy_details:
-            ma_short = strategy_details['moving_average']['short_ma']
-            ma_long = strategy_details['moving_average']['long_ma']
-            features.append(ma_short - ma_long)  # Spread
-        
-        if 'stochastic' in strategy_details:
-            features.append(strategy_details['stochastic']['k_percent'])
-        
-        if 'volume' in strategy_details:
-            features.append(strategy_details['volume']['ratio'])
-        
-        if 'momentum' in strategy_details:
-            features.append(strategy_details['momentum']['value'])
-        
-        # Pad to fixed size if needed
-        while len(features) < 12:
-            features.append(0)
-        
-        return features[:12]  # Keep only first 12 features
-    
+        return np.array(X, dtype=float), np.array(y, dtype=int)
+
+    def _next_version(self, name):
+        latest = MLModel.query.filter_by(model_name=name).order_by(MLModel.version.desc()).first()
+        return (latest.version + 1) if latest else 1
+
+    def _record(self, name, model_type, accuracy, samples, path):
+        MLModel.query.filter_by(model_name=name, is_active=True).update({'is_active': False})
+        db.session.add(MLModel(
+            model_name=name, model_type=model_type, version=self._next_version(name),
+            accuracy=float(accuracy), training_samples=int(samples), is_active=True,
+            model_path=path, last_retrained=datetime.utcnow(),
+        ))
+        db.session.commit()
+
+    @staticmethod
+    def _split(X, y):
+        # Stratify only when both classes have enough members
+        stratify = y if len(set(y)) > 1 and min(np.bincount(y)) >= 2 else None
+        return train_test_split(X, y, test_size=0.2, random_state=42, stratify=stratify)
+
     def train_random_forest(self):
-        """
-        Train a Random Forest model for signal classification
-        """
         X, y = self.prepare_training_data()
-        
-        if X is None or len(X) < 10:
-            logger.warning("Insufficient training data for Random Forest")
+        if X is None or len(X) < MIN_SAMPLES_RF:
+            logger.info("Insufficient training data for Random Forest")
             return None
-        
+        if len(set(y)) < 2:
+            logger.info("Training data has only one outcome class; skipping Random Forest")
+            return None
         try:
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42
-            )
-            
-            # Scale features
-            X_train_scaled = self.scaler.fit_transform(X_train)
-            X_test_scaled = self.scaler.transform(X_test)
-            
-            # Train model
-            model = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10)
-            model.fit(X_train_scaled, y_train)
-            
-            # Evaluate
-            accuracy = model.score(X_test_scaled, y_test)
-            logger.info(f"Random Forest accuracy: {accuracy:.2%}")
-            
-            # Save model
-            model_filename = f'{self.model_path}random_forest_model.joblib'
-            joblib.dump(model, model_filename)
-            joblib.dump(self.scaler, f'{self.model_path}scaler.joblib')
-            
-            # Record in database
-            ml_model = MLModel(
-                model_name='RandomForest_Signals',
-                model_type='Random Forest',
-                version=1,
-                accuracy=accuracy,
-                training_samples=len(X_train),
-                is_active=True,
-                model_path=model_filename
-            )
-            db.session.add(ml_model)
-            db.session.commit()
-            
+            X_train, X_test, y_train, y_test = self._split(X, y)
+            scaler = StandardScaler()
+            X_train_s = scaler.fit_transform(X_train)
+            X_test_s = scaler.transform(X_test)
+
+            model = RandomForestClassifier(n_estimators=200, max_depth=6, min_samples_leaf=2,
+                                           class_weight='balanced', random_state=42)
+            model.fit(X_train_s, y_train)
+            accuracy = model.score(X_test_s, y_test)
+            logger.info(f"Random Forest accuracy: {accuracy:.2%} on {len(X_test)} held-out trades")
+
+            path = self._path('random_forest_model.joblib')
+            joblib.dump(model, path)
+            joblib.dump(scaler, self._path('scaler.joblib'))
+            self._record('RandomForest_Signals', 'Random Forest', accuracy, len(X_train), path)
             return model
-        
         except Exception as e:
-            logger.error(f"Error training Random Forest: {str(e)}")
+            db.session.rollback()
+            logger.error(f"Error training Random Forest: {e}")
             return None
-    
+
     def train_neural_network(self):
-        """
-        Train a Neural Network for signal classification
-        """
-        X, y = self.prepare_training_data()
-        
-        if X is None or len(X) < 20:
-            logger.warning("Insufficient training data for Neural Network")
+        keras = _keras()
+        if keras is None:
+            logger.info("TensorFlow not installed; skipping neural network")
             return None
-        
+        X, y = self.prepare_training_data()
+        if X is None or len(X) < MIN_SAMPLES_NN or len(set(y)) < 2:
+            logger.info("Insufficient training data for Neural Network")
+            return None
         try:
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42
-            )
-            
-            # Scale features
-            X_train_scaled = self.scaler.fit_transform(X_train)
-            X_test_scaled = self.scaler.transform(X_test)
-            
-            # Build model
+            X_train, X_test, y_train, y_test = self._split(X, y)
+            scaler = StandardScaler()
+            X_train_s = scaler.fit_transform(X_train)
+            X_test_s = scaler.transform(X_test)
+
             model = keras.Sequential([
-                keras.layers.Dense(64, activation='relu', input_shape=(X_train_scaled.shape[1],)),
-                keras.layers.Dropout(0.3),
+                keras.layers.Input(shape=(X_train_s.shape[1],)),
                 keras.layers.Dense(32, activation='relu'),
                 keras.layers.Dropout(0.3),
                 keras.layers.Dense(16, activation='relu'),
-                keras.layers.Dense(1, activation='sigmoid')
+                keras.layers.Dense(1, activation='sigmoid'),
             ])
-            
-            model.compile(
-                optimizer='adam',
-                loss='binary_crossentropy',
-                metrics=['accuracy']
-            )
-            
-            # Train
-            model.fit(
-                X_train_scaled, y_train,
-                epochs=50,
-                batch_size=8,
-                validation_split=0.1,
-                verbose=0
-            )
-            
-            # Evaluate
-            _, accuracy = model.evaluate(X_test_scaled, y_test, verbose=0)
+            model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+            model.fit(X_train_s, y_train, epochs=50, batch_size=8, validation_split=0.1, verbose=0,
+                      callbacks=[keras.callbacks.EarlyStopping(patience=5, restore_best_weights=True)])
+            _, accuracy = model.evaluate(X_test_s, y_test, verbose=0)
             logger.info(f"Neural Network accuracy: {accuracy:.2%}")
-            
-            # Save model
-            model_filename = f'{self.model_path}neural_network_model.h5'
-            model.save(model_filename)
-            joblib.dump(self.scaler, f'{self.model_path}nn_scaler.joblib')
-            
-            # Record in database
-            ml_model = MLModel(
-                model_name='NeuralNetwork_Signals',
-                model_type='Neural Network',
-                version=1,
-                accuracy=float(accuracy),
-                training_samples=len(X_train),
-                is_active=True,
-                model_path=model_filename
-            )
-            db.session.add(ml_model)
-            db.session.commit()
-            
+
+            path = self._path('neural_network_model.keras')
+            model.save(path)
+            joblib.dump(scaler, self._path('nn_scaler.joblib'))
+            self._record('NeuralNetwork_Signals', 'Neural Network', accuracy, len(X_train), path)
             return model
-        
         except Exception as e:
-            logger.error(f"Error training Neural Network: {str(e)}")
+            db.session.rollback()
+            logger.error(f"Error training Neural Network: {e}")
             return None
 
+    def train_all(self):
+        return {
+            'random_forest': self.train_random_forest() is not None,
+            'neural_network': self.train_neural_network() is not None,
+        }
+
+
 class SignalPredictor:
-    """
-    Uses trained ML models to predict signal quality and adjust confidence scores
-    """
-    
-    def __init__(self, model_path='model_files/'):
-        self.model_path = model_path
-        self.rf_model = self._load_random_forest()
-        self.nn_model = self._load_neural_network()
-        self.rf_scaler = self._load_scaler('scaler.joblib')
-        self.nn_scaler = self._load_scaler('nn_scaler.joblib')
-    
-    def _load_random_forest(self):
+    """Uses trained models to predict signal quality and adjust confidence"""
+
+    def __init__(self, model_path=None):
+        self.model_path = model_path or Config.MODEL_PATH
+        self.reload()
+
+    def _load(self, filename, loader=joblib.load):
+        path = os.path.join(self.model_path, filename)
         try:
-            model_path = f'{self.model_path}random_forest_model.joblib'
-            if os.path.exists(model_path):
-                return joblib.load(model_path)
+            if os.path.exists(path):
+                return loader(path)
         except Exception as e:
-            logger.warning(f"Could not load Random Forest model: {str(e)}")
+            logger.warning(f"Could not load {filename}: {e}")
         return None
-    
-    def _load_neural_network(self):
-        try:
-            model_path = f'{self.model_path}neural_network_model.h5'
-            if os.path.exists(model_path):
-                return keras.models.load_model(model_path)
-        except Exception as e:
-            logger.warning(f"Could not load Neural Network model: {str(e)}")
-        return None
-    
-    def _load_scaler(self, filename):
-        try:
-            scaler_path = f'{self.model_path}{filename}'
-            if os.path.exists(scaler_path):
-                return joblib.load(scaler_path)
-        except Exception as e:
-            logger.warning(f"Could not load scaler: {str(e)}")
-        return None
-    
-    def predict_signal_quality(self, strategy_details, base_confidence):
-        """
-        Use ML models to predict if a signal will be profitable
-        Returns adjusted confidence score
-        """
-        trainer = MLTrainer()
-        features = np.array([trainer._extract_features(strategy_details, base_confidence)])
-        
+
+    def reload(self):
+        self.rf_model = self._load('random_forest_model.joblib')
+        self.rf_scaler = self._load('scaler.joblib')
+        keras = _keras()
+        self.nn_model = self._load('neural_network_model.keras', keras.models.load_model) if keras else None
+        self.nn_scaler = self._load('nn_scaler.joblib')
+
+    @property
+    def has_models(self):
+        return bool((self.rf_model is not None and self.rf_scaler is not None)
+                    or (self.nn_model is not None and self.nn_scaler is not None))
+
+    def predict_signal_quality(self, strategy_details, base_confidence, signal_type='BUY', price=None):
+        """Returns the confidence blended with the models' win probability"""
+        features = np.array([extract_features(strategy_details, base_confidence, signal_type, price)])
         predictions = []
-        
-        # Random Forest prediction
-        if self.rf_model and self.rf_scaler is not None:
+
+        if self.rf_model is not None and self.rf_scaler is not None:
             try:
-                features_scaled = self.rf_scaler.transform(features)
-                rf_pred = self.rf_model.predict_proba(features_scaled)[0][1]
-                predictions.append(rf_pred)
+                predictions.append(float(self.rf_model.predict_proba(self.rf_scaler.transform(features))[0][1]))
             except Exception as e:
-                logger.warning(f"RF prediction error: {str(e)}")
-        
-        # Neural Network prediction
-        if self.nn_model and self.nn_scaler is not None:
+                logger.warning(f"RF prediction error: {e}")
+
+        if self.nn_model is not None and self.nn_scaler is not None:
             try:
-                features_scaled = self.nn_scaler.transform(features)
-                nn_pred = float(self.nn_model.predict(features_scaled, verbose=0)[0][0])
-                predictions.append(nn_pred)
+                predictions.append(float(self.nn_model.predict(self.nn_scaler.transform(features), verbose=0)[0][0]))
             except Exception as e:
-                logger.warning(f"NN prediction error: {str(e)}")
-        
-        if predictions:
-            # Average ML predictions with base confidence
-            ml_average = np.mean(predictions)
-            adjusted_confidence = (base_confidence + ml_average) / 2
-            return min(adjusted_confidence, 1.0)  # Cap at 1.0
-        
-        return base_confidence
+                logger.warning(f"NN prediction error: {e}")
+
+        if not predictions:
+            return base_confidence
+        return float(min(max((base_confidence + float(np.mean(predictions))) / 2, 0.0), 1.0))

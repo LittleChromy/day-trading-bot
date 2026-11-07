@@ -1,51 +1,80 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { signalsAPI, errorMessage } from '../api/client';
 
-const SignalCard = ({ signal }) => {
-  const getSignalColor = (type) => {
-    return type === 'BUY' ? 'text-green-600' : 'text-red-600';
+const fmtPct = (v) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`);
+
+const SignalCard = ({ signal, onExecuted }) => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const confidenceClass =
+    signal.confidence >= 0.7 ? 'pill-green' : signal.confidence >= 0.5 ? 'pill-yellow' : 'pill-red';
+
+  const execute = async () => {
+    const input = window.prompt(
+      `Open a ${signal.signal} trade in ${signal.symbol}.\n` +
+        'Enter a share quantity, or leave blank to size it from your risk settings:',
+      ''
+    );
+    if (input === null) return;
+    const qty = input.trim() === '' ? null : parseInt(input, 10);
+    if (qty !== null && (!Number.isInteger(qty) || qty <= 0)) {
+      setError('Quantity must be a positive whole number');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await signalsAPI.execute(signal.id, qty);
+      onExecuted && onExecuted();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const getConfidenceColor = (confidence) => {
-    if (confidence >= 0.7) return 'bg-green-100 text-green-800';
-    if (confidence >= 0.5) return 'bg-yellow-100 text-yellow-800';
-    return 'bg-red-100 text-red-800';
-  };
+  const strategies = signal.strategies || {};
 
   return (
-    <div className="signal-card border rounded-lg p-4 shadow-md hover:shadow-lg transition">
-      <div className="flex justify-between items-start mb-3">
+    <div className="signal-card">
+      <div className="row-between">
         <div>
-          <h3 className="text-lg font-bold">{signal.symbol}</h3>
-          <p className="text-sm text-gray-500">{new Date(signal.timestamp).toLocaleString()}</p>
+          <h3 className="card-title">{signal.symbol}</h3>
+          <p className="muted small">{new Date(signal.timestamp + 'Z').toLocaleString()}</p>
         </div>
-        <span className={`text-2xl font-bold ${getSignalColor(signal.signal)}`}>
+        <span className={`signal-type ${signal.signal === 'BUY' ? 'text-green' : 'text-red'}`}>
           {signal.signal}
         </span>
       </div>
 
-      <div className="mb-3">
-        <p className="text-sm text-gray-600">Price: ${signal.price.toFixed(2)}</p>
-        <div className="mt-2">
-          <span className={`inline-block px-3 py-1 rounded-full text-sm font-semibold ${getConfidenceColor(signal.confidence)}`}>
-            Confidence: {(signal.confidence * 100).toFixed(1)}%
+      <p className="muted">Price: ${Number(signal.price).toFixed(2)}</p>
+      <div className="pill-row">
+        <span className={`pill ${confidenceClass}`}>Confidence {fmtPct(signal.confidence)}</span>
+        {signal.base_confidence != null && signal.base_confidence !== signal.confidence && (
+          <span className="pill pill-gray" title="Before ML adjustment">
+            Strategies {fmtPct(signal.base_confidence)}
           </span>
-        </div>
+        )}
       </div>
 
-      <div className="strategies text-xs">
-        <p className="font-semibold mb-1">Strategies:</p>
-        <ul className="text-gray-600">
-          {Object.keys(signal.strategies).map((strategy) => (
-            <li key={strategy}>• {strategy}: {signal.strategies[strategy].signal || 'N/A'}</li>
-          ))}
-        </ul>
-      </div>
+      <ul className="strategy-list">
+        {Object.entries(strategies).map(([name, info]) => (
+          <li key={name}>
+            <span>{name.replace(/_/g, ' ')}</span>
+            <span className={info.signal === 'BUY' ? 'text-green' : 'text-red'}>{info.signal}</span>
+          </li>
+        ))}
+      </ul>
 
-      {!signal.acted_upon && (
-        <button className="mt-3 btn btn-sm btn-success w-full">Execute Trade</button>
-      )}
-      {signal.acted_upon && (
-        <p className="mt-3 text-sm text-green-600 text-center">✓ Trade Executed</p>
+      {error && <p className="error-inline">{error}</p>}
+
+      {signal.acted_upon ? (
+        <p className="text-green center small">✓ Trade #{signal.trade_id} opened</p>
+      ) : (
+        <button className="btn btn-success full" onClick={execute} disabled={busy}>
+          {busy ? 'Placing…' : 'Execute Trade'}
+        </button>
       )}
     </div>
   );

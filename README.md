@@ -1,57 +1,64 @@
 # Day Trading Bot
 
-An AI-powered day trading strategy analyzer with real-time alerts, performance tracking, and machine learning capabilities.
+A day trading bot for US stocks: it scans a watchlist with seven technical strategies,
+scores each opportunity, and can trade automatically with built-in risk management —
+in a local simulated ledger or through an Alpaca paper account.
 
 ## Features
 
-- **Real-time Market Data**: Integrates with Alpaca API for live stock prices
-- **Multiple Trading Strategies**: Technical indicators (RSI, MACD, Bollinger Bands, Moving Averages, Stochastic, Volume-based, Momentum, Mean Reversion)
-- **Strategy Scoring**: Combines signals from multiple strategies into a confidence score
-- **Trade Tracking**: Monitor buy/sell signals and track actual trades
-- **Performance Analytics**: Visualize strategy performance and win rates
-- **Self-Learning ML Models**: Learns from your trading results over time
-- **Paper Trading**: Test strategies with virtual money before risking real capital
-- **Real-time Alerts**: Get notified when buy/sell signals are generated
+- **Signals** – RSI, MACD, Bollinger Bands, moving-average trend, stochastic, volume and
+  momentum vote on every symbol; weighted agreement becomes a confidence score.
+- **Automated trading** – opt-in. Opens positions from high-confidence signals, attaches
+  stop-loss / take-profit, and closes everything before the market closes.
+- **Risk management** – risk-based position sizing, max position size, max open positions,
+  one position per symbol, daily loss limit, long-only by default.
+- **Two execution modes** – `simulated` (no orders leave the app) or `alpaca` (bracket
+  orders to Alpaca; live accounts refused unless explicitly allowed).
+- **Backtesting** – replay the strategy on historical bars with your own parameters.
+- **Self-learning** – a Random Forest (and optional neural network) learns which signals
+  turned into winners and adjusts future confidence scores.
+- **Dashboard** – bot control, signals, trades with live P&L, analytics, backtests.
 
-## Tech Stack
+## Quick start
 
-- **Backend**: Python (Flask/FastAPI, Pandas, NumPy, scikit-learn, TensorFlow)
-- **Frontend**: React
-- **Database**: PostgreSQL (for trade history, performance data, ML model training)
-- **Data Source**: Alpaca API (real-time market data)
-- **Hosting**: AWS/Cloud (configurable)
-
-## Project Structure
-
-```
-day-trading-bot/
-├── backend/
-│   ├── config/
-│   ├── strategies/
-│   ├── models/
-│   ├── data/
-│   ├── api/
-│   ├── utils/
-│   ├── requirements.txt
-│   └── main.py
-├── frontend/
-│   ├── src/
-│   ├── public/
-│   └── package.json
-├── database/
-│   └── migrations/
-└── docker-compose.yml
+```bash
+cp .env.example .env      # add your Alpaca paper API keys
+./start.sh                # docker compose up
 ```
 
-## Getting Started
+Open http://localhost:3000. See [SETUP.md](SETUP.md) for local development, configuration,
+how the bot decides and the full API reference.
 
-1. Clone the repository
-2. Set up Alpaca API keys
-3. Install dependencies
-4. Configure database
-5. Run backend and frontend servers
-6. Access dashboard at `http://localhost:3000`
+## Tech stack
+
+- **Backend**: Python 3.11, Flask, SQLAlchemy, pandas, scikit-learn, APScheduler (TensorFlow optional)
+- **Frontend**: React 18, Chart.js
+- **Database**: PostgreSQL (Docker) or SQLite (local)
+- **Market data & brokerage**: Alpaca
+
+## Project structure
+
+```
+backend/
+  app.py                 application factory (gunicorn 'app:create_app()')
+  config.py              all settings, overridable from .env
+  data_handler.py        Alpaca market data, account and orders
+  strategies/            indicators + StrategyEngine (signal scoring)
+  signal_service.py      scan symbols, store signals, credit strategies after trades
+  risk_manager.py        position sizing and pre-trade checks
+  trading_engine.py      the bot: entries, exits, monitoring, end-of-day flatten
+  backtester.py          walk-forward backtester
+  ml_trainer.py          model training and confidence adjustment
+  scheduler.py           background jobs
+  api/routes/            REST endpoints
+  tests/                 pytest suite (runs offline)
+frontend/
+  src/components/        Bot, Signals, Trades, Analytics, Backtest panels
+docker-compose.yml
+```
 
 ## Warning
 
-This is a decision-support tool, not a guaranteed money printer. No trading strategy has a 100% success rate. Always use proper risk management and never trade with money you can't afford to lose.
+This is a decision-support tool, not a guaranteed money printer. No trading strategy has a
+100% success rate. Start in simulated mode, then Alpaca paper trading, and never trade money
+you can't afford to lose.

@@ -1,135 +1,98 @@
-from flask import Blueprint, jsonify, request, current_app
 from datetime import datetime, timedelta
-from models import db, Signal, Trade, StrategyPerformance
 import logging
-import json
+
+from flask import Blueprint, jsonify, request, current_app
+
+from models import db, Signal
+from signal_service import generate_signals
+from trading_engine import TradingError
 
 logger = logging.getLogger(__name__)
 
 signals_bp = Blueprint('signals', __name__)
 
+
 @signals_bp.route('/generate', methods=['POST'])
-def generate_signals():
+def generate():
     """
-    Generate trading signals for specified symbols
-    POST body: {"symbols": ["AAPL", "MSFT"]}
+    Scan symbols and store new signals.
+    POST body (optional): {"symbols": ["AAPL", "MSFT"]}
     """
     try:
-        data = request.get_json()
-        symbols = data.get('symbols', current_app.config['STOCK_SYMBOLS'])
-        
-        signals_generated = []
-        
-        for symbol in symbols:
-            # Get latest bars data
-            bars = current_app.data_handler.get_bars(symbol, timeframe='5min', limit=100)
-            
-            if bars is None or bars.empty:
-                logger.warning(f"No data for {symbol}")
-                continue
-            
-            # Analyze with strategy engine
-            signal_type, confidence, strategy_details = current_app.strategy_engine.analyze(symbol, bars)
-            
-            if signal_type and confidence >= current_app.config['CONFIDENCE_THRESHOLD']:
-                current_price = bars['close'].iloc[-1]
-                
-                # Save signal to database
-                new_signal = Signal(
-                    symbol=symbol,
-                    signal_type=signal_type,
-                    confidence_score=confidence,
-                    current_price=current_price,
-                    timestamp=datetime.utcnow(),
-                    strategy_details=json.dumps(strategy_details)
-                )
-                db.session.add(new_signal)
-                
-                signals_generated.append({
-                    'symbol': symbol,
-                    'signal': signal_type,
-                    'confidence': round(confidence, 3),
-                    'price': current_price,
-                    'timestamp': new_signal.timestamp.isoformat(),
-                    'strategies': strategy_details
-                })
-        
-        db.session.commit()
-        
+        if not current_app.data_handler.configured:
+            return jsonify({'status': 'error',
+                            'message': 'Alpaca API keys are not configured; cannot fetch market data'}), 503
+        data = request.get_json(silent=True) or {}
+        symbols = data.get('symbols') or current_app.config['STOCK_SYMBOLS']
+        if isinstance(symbols, str):
+            symbols = symbols.split(',')
+        created = generate_signals(current_app, symbols)
         return jsonify({
             'status': 'success',
-            'signals': signals_generated,
-            'count': len(signals_generated)
+            'signals': [s.to_dict() for s in created],
+            'count': len(created),
         }), 200
-    
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error generating signals: {str(e)}")
+        logger.error(f"Error generating signals: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 @signals_bp.route('/recent', methods=['GET'])
 def get_recent_signals():
-    """
-    Get recent signals from the last N hours
-    Query params: hours=24 (default)
-    """
+    """Signals from the last N hours. Query params: hours=24"""
     try:
         hours = request.args.get('hours', 24, type=int)
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
-        
-        signals = Signal.query.filter(
-            Signal.timestamp >= cutoff_time
-        ).order_by(Signal.timestamp.desc()).all()
-        
-        signals_data = []
-        for signal in signals:
-            signals_data.append({
-                'id': signal.id,
-                'symbol': signal.symbol,
-                'signal': signal.signal_type,
-                'confidence': signal.confidence_score,
-                'price': signal.current_price,
-                'timestamp': signal.timestamp.isoformat(),
-                'acted_upon': signal.acted_upon,
-                'strategies': signal.get_strategy_details()
-            })
-        
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        signals = Signal.query.filter(Signal.timestamp >= cutoff).order_by(Signal.timestamp.desc()).all()
         return jsonify({
             'status': 'success',
-            'signals': signals_data,
-            'count': len(signals_data)
+            'signals': [s.to_dict() for s in signals],
+            'count': len(signals),
         }), 200
-    
     except Exception as e:
-        logger.error(f"Error fetching recent signals: {str(e)}")
+        logger.error(f"Error fetching recent signals: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 @signals_bp.route('/by-symbol/<symbol>', methods=['GET'])
 def get_signals_by_symbol(symbol):
-    """
-    Get all signals for a specific symbol
-    """
     try:
-        signals = Signal.query.filter_by(symbol=symbol).order_by(Signal.timestamp.desc()).all()
-        
-        signals_data = []
-        for signal in signals:
-            signals_data.append({
-                'id': signal.id,
-                'signal': signal.signal_type,
-                'confidence': signal.confidence_score,
-                'price': signal.current_price,
-                'timestamp': signal.timestamp.isoformat(),
-                'acted_upon': signal.acted_upon
-            })
-        
+        symbol = symbol.upper()
+        signals = Signal.query.filter_by(symbol=symbol).order_by(Signal.timestamp.desc()).limit(200).all()
         return jsonify({
             'status': 'success',
             'symbol': symbol,
-            'signals': signals_data,
-            'count': len(signals_data)
+            'signals': [s.to_dict() for s in signals],
+            'count': len(signals),
         }), 200
-    
     except Exception as e:
-        logger.error(f"Error fetching signals for {symbol}: {str(e)}")
+        logger.error(f"Error fetching signals for {symbol}: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@signals_bp.route('/<int:signal_id>/execute', methods=['POST'])
+def execute_signal(signal_id):
+    """
+    Open a trade from a signal using the bot's risk rules and execution mode.
+    POST body (optional): {"quantity": 10}  -- omit to use risk-based sizing
+    """
+    signal = db.session.get(Signal, signal_id)
+    if signal is None:
+        return jsonify({'status': 'error', 'message': 'Signal not found'}), 404
+    data = request.get_json(silent=True) or {}
+    quantity = data.get('quantity')
+    try:
+        if quantity is not None and int(quantity) <= 0:
+            return jsonify({'status': 'error', 'message': 'quantity must be a positive integer'}), 400
+        trade = current_app.trading_bot.execute_signal(
+            signal, quantity=quantity, source='MANUAL',
+            enforce_market_hours=current_app.trading_bot.mode == 'alpaca')
+        return jsonify({'status': 'success', 'trade': trade.to_dict()}), 201
+    except (TradingError, ValueError) as e:
+        db.session.rollback()
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error executing signal {signal_id}: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500

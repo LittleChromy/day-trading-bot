@@ -38,3 +38,5 @@ htmlcov/
 model_files/
 *.joblib
 *.h5
+*.db
+*.keras

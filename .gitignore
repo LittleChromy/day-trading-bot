@@ -24,3 +24,5 @@ model_files/
 *.h5
 postgres_data/
 .DS_Store
+*.db
+*.keras

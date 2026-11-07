@@ -1,60 +1,67 @@
 import logging
-from flask import Flask
-from config import config
-from models import db
-from data_handler import AlpacaDataHandler
-from strategies import StrategyEngine
-from scheduler import SignalScheduler
-import threading
 import os
 
-logging.basicConfig(level=logging.INFO)
+from flask import Flask, jsonify
+from flask_cors import CORS
+
+from config import config
+from data_handler import AlpacaDataHandler
+from models import db, ensure_schema
+from strategies import StrategyEngine
+from trading_engine import TradingBot
+
+logging.basicConfig(level=os.getenv('LOG_LEVEL', 'INFO'),
+                    format='%(asctime)s %(levelname)s %(name)s: %(message)s')
 logger = logging.getLogger(__name__)
 
-def create_app(config_name='development'):
+
+def create_app(config_name=None, data_handler=None, start_scheduler=None):
     """
-    Application factory with scheduling support
+    Application factory.
+    data_handler can be injected (tests use a fake market data source).
+    start_scheduler defaults to the ENABLE_SCHEDULER setting.
     """
+    config_name = config_name or os.getenv('FLASK_ENV', 'development')
     app = Flask(__name__)
-    
-    # Load configuration
-    app.config.from_object(config[config_name])
-    
-    # Initialize extensions
+    app.config.from_object(config.get(config_name, config['default']))
+
     db.init_app(app)
-    
-    # Create database tables
+    CORS(app)
+
     with app.app_context():
-        db.create_all()
+        ensure_schema()
         logger.info("Database initialized")
-    
-    # Initialize components
-    app.data_handler = AlpacaDataHandler()
-    app.strategy_engine = StrategyEngine()
-    
-    # Register blueprints
-    from api.routes.signals import signals_bp
-    from api.routes.trades import trades_bp
-    from api.routes.analytics import analytics_bp
-    from api.routes.health import health_bp
-    
+
+    app.data_handler = data_handler or AlpacaDataHandler()
+    app.strategy_engine = StrategyEngine(min_agreeing=app.config['MIN_AGREEING_STRATEGIES'])
+    app.trading_bot = TradingBot(app)
+
+    if not app.data_handler.configured:
+        logger.warning("Alpaca API keys are not set: market data, signals and Alpaca execution are unavailable")
+
+    from api.routes import signals_bp, trades_bp, analytics_bp, health_bp, bot_bp, backtest_bp
     app.register_blueprint(signals_bp, url_prefix='/api/signals')
     app.register_blueprint(trades_bp, url_prefix='/api/trades')
     app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
     app.register_blueprint(health_bp, url_prefix='/api/health')
-    
-    # Setup scheduler
-    scheduler = SignalScheduler(app)
-    scheduler.schedule_signal_generation(interval_seconds=300)  # 5 minutes
-    scheduler.schedule_model_retraining(interval_hours=24)  # 24 hours
-    
-    # Start scheduler in background thread
-    scheduler_thread = threading.Thread(target=scheduler.run_scheduler, daemon=True)
-    scheduler_thread.start()
-    logger.info("Scheduler started in background")
-    
+    app.register_blueprint(bot_bp, url_prefix='/api/bot')
+    app.register_blueprint(backtest_bp, url_prefix='/api/backtest')
+
+    @app.errorhandler(404)
+    def not_found(_):
+        return jsonify({'status': 'error', 'message': 'Not found'}), 404
+
+    if start_scheduler is None:
+        start_scheduler = app.config.get('ENABLE_SCHEDULER', True)
+    if start_scheduler:
+        from scheduler import SignalScheduler
+        app.scheduler = SignalScheduler(app)
+        app.scheduler.start()
+
     return app
 
+
+# Production: gunicorn --workers 1 --threads 8 'app:create_app()'
+# Keep a single worker so only one scheduler/bot instance runs.
 if __name__ == '__main__':
-    app = create_app(os.getenv('FLASK_ENV', 'development'))
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    create_app().run(debug=False, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))

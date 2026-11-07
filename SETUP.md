@@ -1,354 +1,220 @@
-# Day Trading Bot - Setup & Deployment Guide
+# Day Trading Bot - Setup & Operations Guide
 
-## Quick Start
+## Prerequisites
 
-### Prerequisites
-- Docker & Docker Compose
-- Alpaca API Keys (https://alpaca.markets)
-- PostgreSQL 15+ (or use Docker)
-- Python 3.11+ (for local development)
-- Node.js 18+ (for frontend development)
+- Alpaca account and API keys (free paper account: https://alpaca.markets)
+- Docker + Docker Compose **or** Python 3.11+ and Node 18+
 
-### 1. Environment Setup
-
-Create a `.env` file in the root directory:
+## 1. Configure
 
 ```bash
-# Alpaca API Configuration
-ALPACA_API_KEY=your_api_key_here
-ALPACA_SECRET_KEY=your_secret_key_here
-ALPACA_BASE_URL=https://paper-api.alpaca.markets  # Use paper trading first!
-
-# Database Configuration
-DATABASE_URL=postgresql://trading_user:trading_password@postgres:5432/day_trading_bot
-
-# Flask Configuration
-FLASK_ENV=development
-FLASK_DEBUG=True
-SECRET_KEY=your_secret_key_here
-
-# Stock Symbols to Monitor
-STOCK_SYMBOLS=AAPL,MSFT,GOOGL,AMZN,NVDA,TSLA,AMD,META,NFLX,UBER
-CHECK_INTERVAL=60
-```
-
-### 2. Docker Deployment (Recommended)
-
-```bash
-# Clone and navigate to repository
-git clone https://github.com/LittleChromy/day-trading-bot.git
-cd day-trading-bot
-
-# Copy .env file
 cp .env.example .env
-# Edit .env with your Alpaca API keys
-
-# Build and start services
-docker-compose up -d
-
-# Check service status
-docker-compose ps
-
-# View logs
-docker-compose logs -f backend
-docker-compose logs -f frontend
 ```
 
-Access:
-- **Frontend Dashboard**: http://localhost:3000
-- **API Documentation**: http://localhost:5000/api/health/status
-- **Database**: postgres://trading_user:trading_password@localhost:5432/day_trading_bot
+Edit `.env` and set at least `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`. Every option is
+documented in `.env.example`. The defaults are deliberately safe:
 
-### 3. Local Development Setup
+| Setting | Default | Meaning |
+|---|---|---|
+| `AUTO_TRADE` | `false` | The bot only generates signals; you decide what to trade |
+| `EXECUTION_MODE` | `simulated` | Trades are recorded in a local paper ledger at live prices; no orders leave the app |
+| `ALPACA_BASE_URL` | paper URL | Alpaca paper account |
+| `ALLOW_LIVE_TRADING` | `false` | Orders to a non-paper Alpaca URL are refused |
+| `ALLOW_SHORTING` | `false` | SELL signals are shown but not traded |
 
-#### Backend Setup
+## 2. Run
+
+### Docker (recommended)
 
 ```bash
-# Navigate to backend directory
+./start.sh            # or: docker compose up -d --build
+```
+
+- Dashboard: http://localhost:3000
+- API: http://localhost:5000/api/health/status
+
+Set `INSTALL_ML=true` in `.env` before building to include TensorFlow (adds the neural-network
+model, ~600 MB). The Random Forest model works without it.
+
+### Local development
+
+```bash
 cd backend
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Set up database
-cp .env.example .env
-# Edit .env with your settings
-
-# Create database tables
-flask db upgrade
-
-# Run Flask development server
-python main.py
+python -m venv venv && source venv/bin/activate
+pip install -r requirements-dev.txt        # + requirements-ml.txt for TensorFlow
+cp .env.example .env                        # or rely on the root .env
+python main.py                              # http://localhost:5000, SQLite by default
 ```
-
-Backend runs at: http://localhost:5000
-
-#### Frontend Setup
 
 ```bash
-# Navigate to frontend directory
 cd frontend
-
-# Install dependencies
 npm install
-
-# Create .env file
-echo "REACT_APP_API_URL=http://localhost:5000/api" > .env
-
-# Start development server
-npm start
+npm start                                   # http://localhost:3000
 ```
 
-Frontend runs at: http://localhost:3000
+Tables are created (and new columns added to older databases) automatically on startup.
 
-## API Endpoints
+### Tests
+
+```bash
+cd backend
+pytest
+```
+
+The tests use a fake market-data source, so they run offline without API keys.
+
+## 3. How the bot works
+
+Every `SIGNAL_INTERVAL` seconds (default 5 min) the scheduler runs one **bot cycle**:
+
+1. **Monitor positions** – open trades are checked against their stop-loss / take-profit
+   (also every `CHECK_INTERVAL` seconds). In `alpaca` mode the bracket order's legs are
+   synced from the broker instead.
+2. **Flatten before the close** – within `FLATTEN_MINUTES_BEFORE_CLOSE` of the bell, all
+   positions are closed (day trading: nothing is held overnight).
+3. **Scan** – each symbol in `STOCK_SYMBOLS` gets fresh bars (`BAR_TIMEFRAME`, default 5Min)
+   and the seven strategies vote. A signal is stored when at least
+   `MIN_AGREEING_STRATEGIES` agree and the confidence clears `CONFIDENCE_THRESHOLD`.
+   Repeat signals for the same symbol are suppressed for `SIGNAL_COOLDOWN_MINUTES`.
+4. **Trade** (only when auto-trading is on and the market is open) – each new signal passes
+   the risk checks below, is sized, and opened with a stop and target attached.
+
+Every 24 h (`RETRAIN_INTERVAL_HOURS`) the ML models are retrained on closed trades.
+
+### Confidence score
+
+```
+agreement     = weight of the winning side / weight of all strategies that voted
+participation = weight of all strategies that voted / total weight
+confidence    = agreement × (0.5 + 0.5 × participation)
+```
+
+Once trained, the ML models' win probability is averaged with this score.
+
+### Risk management
+
+- **Position size**: the number of shares that loses `RISK_PER_TRADE_PCT` of equity if the stop
+  is hit, capped at `MAX_POSITION_PCT` of equity and at available buying power.
+- **Stop / target**: `STOP_LOSS_PCT` / `TAKE_PROFIT_PCT` from the entry price.
+- **Limits**: one position per symbol, at most `MAX_OPEN_POSITIONS`, and no new trades after
+  today's P&L drops below `-MAX_DAILY_LOSS_PCT` of equity.
+
+### Execution modes
+
+| | `simulated` | `alpaca` |
+|---|---|---|
+| Orders sent | none | market entry + bracket (stop & take-profit legs) |
+| Fills | latest trade price | broker fills |
+| Equity | `STARTING_CAPITAL` + realized + unrealized P&L | Alpaca account |
+| Market hours | Alpaca clock (or regular-hours estimate) | Alpaca clock |
+
+Recommended path: run `simulated` for a while → backtest and tune → `alpaca` against the
+**paper** account → only then consider live trading.
+
+## 4. Dashboard
+
+- **Bot** – status, equity, today's P&L, start/stop auto-trading, run a cycle now, flatten
+  everything, ML model versions and the activity log.
+- **Signals** – recent signals with each strategy's vote; *Execute Trade* opens a position
+  using the risk rules (leave quantity blank for automatic sizing).
+- **Trades** – open trades with live unrealized P&L, close/cancel, and a form to log trades
+  you placed elsewhere.
+- **Analytics** – win rate, P&L, cumulative P&L, P&L by symbol and a per-strategy scorecard.
+- **Backtest** – replay the strategy on historical Alpaca bars with your own stop/target/threshold.
+
+## 5. API reference
+
+All responses are JSON with a `status` field.
+
+### Bot
+- `GET  /api/bot/status` – mode, market state, open positions, risk settings
+- `GET  /api/bot/account` – equity, buying power, today's P&L
+- `POST /api/bot/auto-trade` `{"enabled": true}` – toggle auto-trading (until restart)
+- `POST /api/bot/run` – run one cycle now
+- `POST /api/bot/flatten` – close all open positions
+- `GET  /api/bot/events?limit=50` – activity log
+- `POST /api/bot/retrain` – retrain ML models now
+- `GET  /api/bot/models` – trained model versions
 
 ### Signals
-- `POST /api/signals/generate` - Generate new trading signals
-- `GET /api/signals/recent?hours=24` - Get recent signals
-- `GET /api/signals/by-symbol/<symbol>` - Get signals for a specific symbol
+- `POST /api/signals/generate` `{"symbols": ["AAPL"]}` – scan now (symbols optional)
+- `GET  /api/signals/recent?hours=24`
+- `GET  /api/signals/by-symbol/<symbol>`
+- `POST /api/signals/<id>/execute` `{"quantity": 10}` – open a trade from a signal (quantity optional)
 
 ### Trades
-- `POST /api/trades/create` - Create a new trade
-- `PUT /api/trades/close/<trade_id>` - Close an open trade
-- `GET /api/trades/all` - Get all trades (with filters)
-- `GET /api/trades/<trade_id>` - Get a specific trade
+- `POST /api/trades/create` – log a trade placed elsewhere
+  `{"symbol","trade_type":"BUY|SELL","entry_price","quantity","stop_loss?","take_profit?","signal_id?","notes?"}`
+- `PUT  /api/trades/close/<id>` `{"exit_price": 151.75}` – exit price optional for bot-managed trades
+- `PUT  /api/trades/cancel/<id>`
+- `GET  /api/trades/all?status=OPEN&symbol=AAPL&limit=50`
+- `GET  /api/trades/<id>`
 
 ### Analytics
-- `GET /api/analytics/performance?days=7` - Get performance metrics
-- `GET /api/analytics/by-symbol` - Get performance by symbol
-- `GET /api/analytics/signal-accuracy` - Get signal accuracy metrics
+- `GET /api/analytics/performance?days=7`
+- `GET /api/analytics/by-symbol`
+- `GET /api/analytics/signal-accuracy`
+- `GET /api/analytics/strategies`
+- `GET /api/analytics/equity-curve?days=30`
+
+### Backtest
+- `POST /api/backtest/run`
+  `{"symbol": "AAPL", "days": 30, "timeframe": "5Min", "overrides": {"STOP_LOSS_PCT": 1, "TAKE_PROFIT_PCT": 2, "CONFIDENCE_THRESHOLD": 0.65}}`
 
 ### Health
-- `GET /api/health/status` - API health check
+- `GET /api/health/status`
 
-## Trading Strategies
+## 6. Strategies
 
-The bot uses 7 technical analysis strategies:
+| Strategy | BUY when | SELL when | Weight |
+|---|---|---|---|
+| RSI (14, Wilder) | < 30 | > 70 | 0.15 |
+| MACD (12/26/9) | histogram > 0 | histogram < 0 | 0.20 |
+| Bollinger Bands (20, 2σ) | price ≤ lower band | price ≥ upper band | 0.15 |
+| Moving averages (20/50) | short > long | short < long | 0.20 |
+| Stochastic (14, high/low) | %K < 20 | %K > 80 | 0.10 |
+| Volume (20) | volume > 1.5× avg on an up bar | … on a down bar | 0.10 |
+| Momentum (10-bar ROC) | > 0 | < 0 | 0.10 |
 
-1. **RSI (Relative Strength Index)**
-   - Overbought > 70 (SELL signal)
-   - Oversold < 30 (BUY signal)
-   - Period: 14
+## 7. Machine learning
 
-2. **MACD (Moving Average Convergence Divergence)**
-   - MACD > Signal Line (BUY)
-   - MACD < Signal Line (SELL)
-   - Fast EMA: 12, Slow EMA: 26, Signal: 9
+Each signal that becomes a closed trade is a training example (features: confidence, side,
+RSI, MACD histogram, Bollinger %B, MA spread, stochastic %K, volume ratio, momentum,
+number of agreeing strategies; label: profitable or not). Training needs at least 10 such
+trades with both wins and losses (30 for the neural network). Models are versioned in the
+`ml_models` table and stored in `MODEL_PATH`.
 
-3. **Bollinger Bands**
-   - Price at lower band (BUY)
-   - Price at upper band (SELL)
-   - Period: 20, Std Dev: 2
-
-4. **Moving Average Crossover**
-   - Short MA > Long MA (BUY)
-   - Short MA < Long MA (SELL)
-   - Short Period: 20, Long Period: 50
-
-5. **Stochastic Oscillator**
-   - %K < 20 (BUY - Oversold)
-   - %K > 80 (SELL - Overbought)
-   - Period: 14
-
-6. **Volume Analysis**
-   - High volume on price increase (BUY signal strengthened)
-   - High volume on price decrease (SELL signal strengthened)
-
-7. **Momentum**
-   - Positive momentum (BUY)
-   - Negative momentum (SELL)
-   - Period: 10
-
-## Machine Learning
-
-The bot includes self-learning capabilities:
-
-- **Random Forest Classifier**: Learns from historical trades to predict profitable signals
-- **Neural Network**: Deep learning model for signal quality prediction
-- **Automatic Retraining**: Models retrain every 24 hours with new trade data
-- **Confidence Score Adjustment**: ML predictions adjust signal confidence scores
-
-### Model Training
-
-Models are automatically trained on closed trades:
+## 8. Operations
 
 ```bash
-# Manual model retraining
-from ml_trainer import MLTrainer
-trainer = MLTrainer()
-trainer.train_random_forest()
-trainer.train_neural_network()
+docker compose logs -f backend     # bot activity, errors
+docker compose ps
+docker compose down                # stop (data persists in volumes)
+docker compose down -v             # stop and DELETE all data
 ```
 
-## Database Schema
+Run gunicorn with **one worker** (the default in the Dockerfile): each worker would otherwise
+start its own scheduler and trade the same signals.
 
-### Trades Table
-- `id` - Primary key
-- `symbol` - Stock symbol
-- `trade_type` - BUY or SELL
-- `entry_price` - Trade entry price
-- `exit_price` - Trade exit price
-- `quantity` - Number of shares
-- `entry_time` - Timestamp of trade entry
-- `exit_time` - Timestamp of trade exit
-- `profit_loss` - Calculated P&L
-- `profit_loss_percent` - P&L percentage
-- `status` - OPEN, CLOSED, CANCELLED
+## 9. Security
 
-### Signals Table
-- `id` - Primary key
-- `symbol` - Stock symbol
-- `signal_type` - BUY or SELL
-- `confidence_score` - 0-1 confidence
-- `current_price` - Price when signal generated
-- `timestamp` - Signal timestamp
-- `strategy_details` - JSON of contributing strategies
-- `acted_upon` - Whether a trade was created
-- `trade_id` - Link to associated trade
+- Never commit `.env`. If API keys were ever committed, regenerate them in the Alpaca dashboard.
+- The API has no authentication. Keep port 5000 on localhost or behind a VPN/reverse proxy
+  with auth — anyone who can reach it can toggle auto-trading and close positions.
+- Change `POSTGRES_PASSWORD` and `SECRET_KEY` for anything beyond local use.
 
-### Strategy Performance Table
-- `id` - Primary key
-- `strategy_name` - Name of strategy
-- `symbol` - Stock symbol
-- `total_signals` - Total signals generated
-- `winning_signals` - Number of winning signals
-- `losing_signals` - Number of losing signals
-- `win_rate` - Percentage win rate
-- `avg_profit` - Average profit per signal
-- `avg_loss` - Average loss per signal
+## 10. Troubleshooting
 
-## Configuration
-
-Edit `backend/config.py` to customize:
-
-```python
-# Strategy parameters
-RSI_PERIOD = 14
-RSI_OVERBOUGHT = 70
-RSI_OVERSOLD = 30
-
-MACD_FAST = 12
-MACD_SLOW = 26
-MACD_SIGNAL = 9
-
-BB_PERIOD = 20
-BB_STD_DEV = 2
-
-MA_SHORT = 20
-MA_LONG = 50
-
-# Confidence threshold for generating signals
-CONFIDENCE_THRESHOLD = 0.60
-
-# Check interval (seconds)
-CHECK_INTERVAL = 60
-```
-
-## Monitoring & Logging
-
-All activities are logged to stdout. Set log level in `.env`:
-
-```
-LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
-```
-
-View logs:
-
-```bash
-# Docker
-docker-compose logs -f backend
-
-# Local
-tail -f logs/app.log
-```
-
-## Security Notes
-
-⚠️ **IMPORTANT**:
-1. Never commit `.env` file with real API keys
-2. Use Paper Trading first (`https://paper-api.alpaca.markets`)
-3. Always test with small positions
-4. Implement proper risk management (stop-loss, position sizing)
-5. This is a decision-support tool, not a guaranteed profit machine
-6. No strategy has 100% success rate
-
-## Troubleshooting
-
-### Database Connection Error
-```bash
-# Check PostgreSQL is running
-docker-compose ps postgres
-
-# Reset database
-docker-compose down -v
-docker-compose up -d
-```
-
-### API Connection Error
-```bash
-# Check backend logs
-docker-compose logs backend
-
-# Verify API keys in .env
-cat .env | grep ALPACA
-```
-
-### Frontend Not Loading
-```bash
-# Clear npm cache
-cd frontend
-npm cache clean --force
-rm -rf node_modules package-lock.json
-npm install
-npm start
-```
-
-## Performance Tips
-
-1. **Reduce Symbol Count**: Monitor fewer symbols for better performance
-2. **Increase Check Interval**: Reduce signal generation frequency
-3. **Optimize Database**: Index frequently queried columns
-4. **Use Paper Trading**: Test before using real money
-5. **Monitor Resource Usage**: Check CPU/Memory during peak hours
-
-## Deployment to Cloud
-
-### AWS Deployment
-```bash
-# Using AWS ECS with Docker images
-# 1. Push images to ECR
-# 2. Create ECS task definitions
-# 3. Deploy with RDS PostgreSQL
-```
-
-### Heroku Deployment
-```bash
-# Deploy backend
-git push heroku main
-```
-
-### DigitalOcean App Platform
-```bash
-# Deploy using doctl CLI
-doctl apps create --spec app.yaml
-```
-
-## Support & Contributing
-
-For issues, questions, or contributions:
-1. Check existing GitHub issues
-2. Create detailed issue reports
-3. Submit pull requests with improvements
-
-## License
-
-MIT License - See LICENSE file
+| Symptom | Fix |
+|---|---|
+| "Alpaca API keys are not configured" | Set both keys in `.env`, then `docker compose up -d --build backend` |
+| No signals ever appear | Market closed / not enough bars; try `CONFIDENCE_THRESHOLD=0.55` or `MIN_AGREEING_STRATEGIES=2`; check `docker compose logs backend` |
+| `subscription does not permit querying recent SIP data` | Set `ALPACA_DATA_FEED=iex` |
+| Bot skips signals | See the reason in `POST /api/bot/run` → `skipped`, or the Bot tab activity log |
+| Dashboard can't reach the API | `REACT_APP_API_URL` is baked in at build time; rebuild the frontend after changing it |
 
 ## Disclaimer
 
-This bot is for educational purposes. Trading stocks involves risk. Past performance does not guarantee future results. Always do your own research and consult with a financial advisor before trading with real money.
+This is a decision-support and paper-trading tool, not financial advice. No strategy wins
+every trade, and past/backtested performance does not predict future results. Never trade
+money you can't afford to lose.

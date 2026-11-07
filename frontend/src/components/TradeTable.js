@@ -1,71 +1,100 @@
 import React from 'react';
-import { tradesAPI } from '../api/client';
+import { tradesAPI, errorMessage } from '../api/client';
 
-const TradeTable = ({ trades, onClose }) => {
-  const handleCloseTrade = async (tradeId) => {
-    const exitPrice = prompt('Enter exit price:');
-    if (exitPrice) {
-      try {
-        await tradesAPI.close(tradeId, parseFloat(exitPrice));
-        onClose();
-        alert('Trade closed successfully');
-      } catch (err) {
-        alert('Failed to close trade: ' + err.message);
-      }
+const money = (v) => (v == null ? '—' : `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`);
+const pnlClass = (v) => (v > 0 ? 'text-green' : v < 0 ? 'text-red' : '');
+
+const TradeTable = ({ trades, onChange }) => {
+  const handleClose = async (trade) => {
+    const managed = trade.execution_mode === 'simulated' || trade.execution_mode === 'alpaca';
+    const hint = managed ? ' (leave blank to close at the market price)' : '';
+    const input = window.prompt(`Exit price for ${trade.symbol}${hint}:`, '');
+    if (input === null) return;
+    const price = input.trim() === '' ? null : parseFloat(input);
+    if (price !== null && (!Number.isFinite(price) || price <= 0)) {
+      window.alert('Enter a positive number');
+      return;
+    }
+    try {
+      await tradesAPI.close(trade.id, price);
+      onChange();
+    } catch (err) {
+      window.alert(`Failed to close trade: ${errorMessage(err)}`);
     }
   };
 
+  const handleCancel = async (trade) => {
+    if (!window.confirm(`Cancel trade #${trade.id} (${trade.symbol})? It will be excluded from stats.`)) return;
+    try {
+      await tradesAPI.cancel(trade.id);
+      onChange();
+    } catch (err) {
+      window.alert(`Failed to cancel trade: ${errorMessage(err)}`);
+    }
+  };
+
+  if (!trades.length) return <div className="no-signals">No trades</div>;
+
   return (
-    <div className="trade-table-container overflow-x-auto">
-      <table className="w-full border-collapse">
+    <div className="table-wrap">
+      <table className="data-table">
         <thead>
-          <tr className="bg-gray-200">
-            <th className="border p-2 text-left">Symbol</th>
-            <th className="border p-2 text-left">Type</th>
-            <th className="border p-2 text-right">Entry</th>
-            <th className="border p-2 text-right">Exit</th>
-            <th className="border p-2 text-right">Qty</th>
-            <th className="border p-2 text-right">P&L</th>
-            <th className="border p-2 text-center">Status</th>
-            <th className="border p-2 text-center">Action</th>
+          <tr>
+            <th>Symbol</th>
+            <th>Side</th>
+            <th className="num">Qty</th>
+            <th className="num">Entry</th>
+            <th className="num">Stop / Target</th>
+            <th className="num">Exit / Last</th>
+            <th className="num">P&amp;L</th>
+            <th>Status</th>
+            <th>Source</th>
+            <th />
           </tr>
         </thead>
         <tbody>
-          {trades.map((trade) => (
-            <tr key={trade.id} className="hover:bg-gray-50">
-              <td className="border p-2 font-bold">{trade.symbol}</td>
-              <td className={`border p-2 ${trade.type === 'BUY' ? 'text-green-600' : 'text-red-600'}`}>
-                {trade.type}
-              </td>
-              <td className="border p-2 text-right">${trade.entry_price.toFixed(2)}</td>
-              <td className="border p-2 text-right">
-                {trade.exit_price ? `$${trade.exit_price.toFixed(2)}` : '-'}
-              </td>
-              <td className="border p-2 text-right">{trade.quantity}</td>
-              <td className={`border p-2 text-right font-semibold ${
-                trade.profit_loss > 0 ? 'text-green-600' : trade.profit_loss < 0 ? 'text-red-600' : ''
-              }`}>
-                {trade.profit_loss ? `$${trade.profit_loss.toFixed(2)}` : '-'}
-              </td>
-              <td className="border p-2 text-center">
-                <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                  trade.status === 'OPEN' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
-                }`}>
-                  {trade.status}
-                </span>
-              </td>
-              <td className="border p-2 text-center">
-                {trade.status === 'OPEN' && (
-                  <button
-                    className="btn btn-sm btn-warning"
-                    onClick={() => handleCloseTrade(trade.id)}
-                  >
-                    Close
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
+          {trades.map((t) => {
+            const pnl = t.status === 'OPEN' ? t.unrealized_pnl : t.profit_loss;
+            const exitOrLast = t.status === 'OPEN' ? t.current_price : t.exit_price;
+            return (
+              <tr key={t.id}>
+                <td className="bold">{t.symbol}</td>
+                <td className={t.type === 'BUY' ? 'text-green' : 'text-red'}>
+                  {t.type === 'BUY' ? 'LONG' : 'SHORT'}
+                </td>
+                <td className="num">{t.quantity}</td>
+                <td className="num">{money(t.entry_price)}</td>
+                <td className="num muted">
+                  {t.stop_loss ? `${money(t.stop_loss)} / ${money(t.take_profit)}` : '—'}
+                </td>
+                <td className="num">{money(exitOrLast)}</td>
+                <td className={`num bold ${pnlClass(pnl)}`}>
+                  {money(pnl)}
+                  {t.status === 'OPEN' && pnl != null && <span className="muted small"> unrl.</span>}
+                </td>
+                <td>
+                  <span className={`pill ${t.status === 'OPEN' ? 'pill-blue' : t.status === 'CLOSED' ? 'pill-green' : 'pill-gray'}`}>
+                    {t.status}
+                  </span>
+                  {t.exit_reason && <div className="muted small">{t.exit_reason.replace(/_/g, ' ').toLowerCase()}</div>}
+                </td>
+                <td className="muted small">
+                  {t.source || 'MANUAL'}
+                  {t.execution_mode ? ` · ${t.execution_mode}` : ''}
+                </td>
+                <td>
+                  {t.status === 'OPEN' && (
+                    <div className="actions">
+                      <button className="btn btn-sm btn-warning" onClick={() => handleClose(t)}>Close</button>
+                      {t.execution_mode !== 'alpaca' && (
+                        <button className="btn btn-sm btn-secondary" onClick={() => handleCancel(t)}>Cancel</button>
+                      )}
+                    </div>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
