@@ -225,3 +225,62 @@ class AlpacaDataHandler:
         except Exception as e:
             logger.warning(f"Could not cancel open orders for {symbol}: {e}")
         return self.api.close_position(symbol)
+
+    # ---------------------------------------------------------------- screener
+    DATA_URL = 'https://data.alpaca.markets'
+
+    def _data_get(self, path, params=None):
+        """GET a market-data endpoint that alpaca-trade-api has no wrapper for"""
+        import requests
+        response = requests.get(
+            f'{self.DATA_URL}{path}', params=params or {}, timeout=15,
+            headers={'APCA-API-KEY-ID': self.api_key, 'APCA-API-SECRET-KEY': self.secret_key},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_most_actives(self, top=50):
+        """Today's most traded stocks by volume: [{'symbol', 'volume', 'trade_count'}]"""
+        data = self._data_get('/v1beta1/screener/stocks/most-actives', {'by': 'volume', 'top': min(top, 100)})
+        return data.get('most_actives') or []
+
+    def get_movers(self, top=25):
+        """Today's biggest gainers and losers: {'gainers': [...], 'losers': [...]} with percent_change and price"""
+        data = self._data_get('/v1beta1/screener/stocks/movers', {'top': min(top, 50)})
+        return {'gainers': data.get('gainers') or [], 'losers': data.get('losers') or []}
+
+    def get_snapshot_quotes(self, symbols):
+        """
+        {symbol: {'price', 'change_pct'}} from snapshots (latest trade vs previous close).
+        Symbols without a usable price are left out.
+        """
+        result = {}
+        if not symbols:
+            return result
+        snapshots = self.api.get_snapshots(list(symbols), feed=self.feed)
+        for symbol, snap in (snapshots or {}).items():
+            if snap is None:
+                continue
+            price = getattr(getattr(snap, 'latest_trade', None), 'price', None) \
+                or getattr(getattr(snap, 'daily_bar', None), 'close', None)
+            prev = getattr(getattr(snap, 'prev_daily_bar', None), 'close', None)
+            if not price:
+                continue
+            change = (float(price) - float(prev)) / float(prev) * 100 if prev else None
+            result[symbol] = {'price': float(price), 'change_pct': change}
+        return result
+
+    def is_tradable_stock(self, symbol):
+        """Active, tradable US equity on a major exchange (cached)"""
+        cache = self.__dict__.setdefault('_asset_cache', {})
+        if symbol not in cache:
+            try:
+                asset = self.api.get_asset(symbol)
+                cache[symbol] = bool(
+                    getattr(asset, 'tradable', False)
+                    and getattr(asset, 'status', '') == 'active'
+                    and getattr(asset, 'exchange', '') in ('NYSE', 'NASDAQ', 'ARCA', 'AMEX', 'BATS')
+                )
+            except Exception:
+                cache[symbol] = False
+        return cache[symbol]

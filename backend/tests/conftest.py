@@ -51,6 +51,12 @@ class FakeDataHandler:
         self.is_paper = True
         self.orders = []
         self.closed = []
+        self.clock_time = '2026-03-02 15:00'
+        self.most_actives = []
+        self.movers = {'gainers': [], 'losers': []}
+        self.quotes = {}
+        self.untradable = set()
+        self.screener_error = None
 
     @property
     def configured(self):
@@ -70,12 +76,28 @@ class FakeDataHandler:
         return float(df['close'].iloc[-1]) if df is not None else None
 
     def get_clock(self):
-        now = pd.Timestamp('2026-03-02 15:00', tz='America/New_York').to_pydatetime()
+        now = pd.Timestamp(self.clock_time, tz='America/New_York').to_pydatetime()
         close = pd.Timestamp('2026-03-02 16:00', tz='America/New_York').to_pydatetime()
         return {'is_open': self.market_open, 'timestamp': now, 'next_open': now, 'next_close': close}
 
     def get_account_info(self):
         return None
+
+    def get_most_actives(self, top=50):
+        if self.screener_error:
+            raise RuntimeError(self.screener_error)
+        return self.most_actives
+
+    def get_movers(self, top=25):
+        if self.screener_error:
+            raise RuntimeError(self.screener_error)
+        return self.movers
+
+    def get_snapshot_quotes(self, symbols):
+        return {s: self.quotes[s] for s in symbols if s in self.quotes}
+
+    def is_tradable_stock(self, symbol):
+        return symbol not in self.untradable
 
     def get_position(self, symbol):
         return object()

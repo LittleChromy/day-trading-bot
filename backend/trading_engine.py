@@ -39,6 +39,34 @@ class TradingBot:
         self.last_cycle = None
         self.last_error = None
         self._lock = threading.RLock()
+        self._alerted = {}            # message -> last time it was sent to Discord
+        self._seen_open_on = None     # trading day on which the market was last seen open
+        self._summary_sent_on = None  # trading day for which the daily summary was sent
+        self._halt_notified_on = None
+
+    @property
+    def notifier(self):
+        return getattr(self.app, 'notifier', None)
+
+    def _notify(self, method, *args, **kwargs):
+        notifier = self.notifier
+        if notifier is not None:
+            try:
+                getattr(notifier, method)(*args, **kwargs)
+            except Exception as e:  # notifications must never break trading
+                logger.warning(f"Notification failed: {e}")
+
+    def _alert(self, message, minutes=30):
+        """Send a problem alert, at most once per `minutes` for the same message"""
+        now = datetime.utcnow()
+        last = self._alerted.get(message)
+        if last is None or (now - last).total_seconds() > minutes * 60:
+            self._alerted[message] = now
+            self._notify('problem', message)
+
+    @staticmethod
+    def _trading_day():
+        return (datetime.now(NY) if NY else datetime.utcnow()).date()
 
     # ------------------------------------------------------------ helpers
     def log_event(self, event_type, message, symbol=None, level='INFO'):
@@ -48,6 +76,8 @@ class TradingBot:
             db.session.commit()
         except Exception:
             db.session.rollback()
+        if level == 'ERROR':
+            self._alert(message)
 
     def validate_mode(self):
         if self.mode not in ('simulated', 'alpaca'):
@@ -193,6 +223,7 @@ class TradingBot:
 
             self.log_event('ENTRY', f"{source} {signal.signal_type} {qty} {signal.symbol} @ {price:.2f} "
                                     f"(stop {stop:.2f}, target {target:.2f}, {self.mode})", signal.symbol)
+            self._notify('entry', trade)
             return trade
 
     # ---------------------------------------------------------------- exits
@@ -225,6 +256,7 @@ class TradingBot:
             self.log_event('EXIT', f"Closed {trade.trade_type} {trade.quantity} {trade.symbol} @ "
                                    f"{trade.exit_price:.2f} ({trade.exit_reason}) P&L {trade.profit_loss:+.2f}",
                            trade.symbol)
+            self._notify('exit', trade)
             return trade
 
     def _broker_exit(self, trade):
@@ -305,15 +337,24 @@ class TradingBot:
 
             summary['exits'] += [t.id for t in self.monitor_positions()]
 
+            if clock['is_open']:
+                self._seen_open_on = self._trading_day()
+
             if self.cfg.get('FLATTEN_AT_CLOSE', True) and self.near_close(clock):
                 summary['exits'] += [t.id for t in self.flatten_all('EOD')]
+                self._maybe_daily_summary(clock)
                 self.last_cycle = datetime.utcnow()
                 return summary
+            self._maybe_daily_summary(clock)
 
             if not generate:
                 return summary
             new_signals = generate_signals(self.app)
             summary['signals'] = len(new_signals)
+            scan = getattr(self.app, 'last_scan', {})
+            if scan.get('symbols') and len(scan.get('no_data', [])) == len(scan['symbols']):
+                self._alert('No market data from Alpaca for any symbol. Check the API keys and the backend log.',
+                            minutes=240)
 
             if self.auto_trade and clock['is_open']:
                 for signal in sorted(new_signals, key=lambda s: s.confidence_score, reverse=True):
@@ -324,6 +365,9 @@ class TradingBot:
                         summary['skipped'].append({'signal_id': signal.id, 'symbol': signal.symbol,
                                                    'reason': str(e)})
                         logger.info(f"Skipped {signal.signal_type} {signal.symbol}: {e}")
+                        if 'Daily loss limit' in str(e) and self._halt_notified_on != self._trading_day():
+                            self._halt_notified_on = self._trading_day()
+                            self._notify('problem', str(e), halt=True)
             self.last_error = None
         except Exception as e:
             db.session.rollback()
@@ -331,6 +375,20 @@ class TradingBot:
             self.log_event('ERROR', f"Bot cycle failed: {e}", level='ERROR')
         self.last_cycle = datetime.utcnow()
         return summary
+
+    def _maybe_daily_summary(self, clock):
+        """Post the end-of-day summary once: at the pre-close flatten, or when the market is first seen closed"""
+        today = self._trading_day()
+        if self._summary_sent_on == today:
+            return
+        closing = self.near_close(clock)
+        just_closed = not clock.get('is_open') and self._seen_open_on == today
+        if not (closing or just_closed):
+            return
+        self._summary_sent_on = today
+        closed = Trade.query.filter(Trade.status == 'CLOSED',
+                                    Trade.exit_time >= self._start_of_trading_day_utc()).all()
+        self._notify('daily_summary', closed, self.account_snapshot(), len(self.open_trades()))
 
     def status(self):
         clock = self.market_clock()
@@ -345,7 +403,9 @@ class TradingBot:
             'last_cycle': self.last_cycle.isoformat() if self.last_cycle else None,
             'last_error': self.last_error,
             'open_positions': len(self.open_trades()),
-            'symbols': self.cfg['STOCK_SYMBOLS'],
+            'symbols': self.app.scanner.symbols() if getattr(self.app, 'scanner', None) else self.cfg['STOCK_SYMBOLS'],
+            'scanner': self.app.scanner.status() if getattr(self.app, 'scanner', None) else None,
+            'notifications': bool(self.notifier and self.notifier.enabled),
             'risk': {k: self.cfg.get(k) for k in (
                 'CONFIDENCE_THRESHOLD', 'RISK_PER_TRADE_PCT', 'MAX_POSITION_PCT', 'STOP_LOSS_PCT',
                 'TAKE_PROFIT_PCT', 'MAX_OPEN_POSITIONS', 'MAX_DAILY_LOSS_PCT', 'ALLOW_SHORTING',

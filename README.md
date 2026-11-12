@@ -8,6 +8,9 @@ in a local simulated ledger or through an Alpaca paper account.
 
 - **Signals** – RSI, MACD, Bollinger Bands, moving-average trend, stochastic, volume and
   momentum vote on every symbol; weighted agreement becomes a confidence score.
+- **Stock scanner** – picks the day's most active stocks and movers on its own, filtered
+  for price, size of the move and tradability, alongside your fixed watchlist.
+- **Discord notifications** – signals, entries, exits with P&L, problems and a daily summary.
 - **Automated trading** – opt-in. Opens positions from high-confidence signals, attaches
   stop-loss / take-profit, and closes everything before the market closes.
 - **Risk management** – risk-based position sizing, max position size, max open positions,
@@ -44,6 +47,8 @@ backend/
   config.py              all settings, overridable from .env
   data_handler.py        Alpaca market data, account and orders
   strategies/            indicators + StrategyEngine (signal scoring)
+  scanner.py             picks which stocks to analyze (Alpaca screener + filters)
+  notifier.py            Discord notifications
   signal_service.py      scan symbols, store signals, credit strategies after trades
   risk_manager.py        position sizing and pre-trade checks
   trading_engine.py      the bot: entries, exits, monitoring, end-of-day flatten

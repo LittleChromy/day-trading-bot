@@ -1,5 +1,19 @@
 # Day Trading Bot - Changelog
 
+## [1.2.0] - 2026-11-12
+
+### Added
+- Stock scanner (`scanner.py`): analyzes the day's most active stocks and gainers from Alpaca's
+  screener, filtered by price, size of today's move and tradability; falls back to the fixed
+  watchlist when the screener is unavailable (`AUTO_SCAN`, `SCAN_*` settings)
+- Discord notifications (`notifier.py`): new signals, entries, exits with P&L, problems, daily
+  loss halt and an end-of-day summary (`DISCORD_WEBHOOK_URL`)
+- `/api/bot/universe` and `/api/bot/notify-test`; Bot tab shows scanner picks and notification status
+
+### Fixed
+- "Scan Now" reported "no new signals" when Alpaca rejected the API keys; it now says that no
+  market data came back
+
 ## [1.1.0] - 2026-11-07
 
 ### Added

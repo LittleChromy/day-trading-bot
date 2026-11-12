@@ -64,6 +64,8 @@ const BotPanel = () => {
   }
 
   const r = status.risk || {};
+  const scanner = status.scanner || {};
+  const picks = scanner.scanned || [];
 
   return (
     <div className="bot-panel">
@@ -113,7 +115,6 @@ const BotPanel = () => {
             <dt>Daily loss limit</dt><dd>{r.MAX_DAILY_LOSS_PCT}%</dd>
             <dt>Short selling</dt><dd>{r.ALLOW_SHORTING ? 'allowed' : 'off'}</dd>
             <dt>Flatten before close</dt><dd>{r.FLATTEN_AT_CLOSE ? 'yes' : 'no'}</dd>
-            <dt>Watchlist</dt><dd>{(status.symbols || []).join(', ')}</dd>
           </dl>
           <p className="muted small">Change these in <code>.env</code> and restart the backend.</p>
         </div>
@@ -143,6 +144,74 @@ const BotPanel = () => {
             </table>
           ) : (
             <p className="muted small">No models yet. They train automatically once at least 10 signal-based trades have closed with both wins and losses.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="two-col">
+        <div className="card">
+          <div className="row-between">
+            <h3>Stocks being analyzed ({(status.symbols || []).length})</h3>
+            {scanner.enabled && (
+              <button className="btn btn-sm btn-secondary" disabled={!!busy}
+                      onClick={() => act('rescan', botAPI.rescan, (d) => `Scanner picked ${d.scanner.scanned.length} stock(s)`)}>
+                {busy === 'rescan' ? 'Scanning…' : 'Rescan now'}
+              </button>
+            )}
+          </div>
+          {scanner.enabled ? (
+            <>
+              {scanner.last_error && (
+                <p className="error-inline">Scanner unavailable ({scanner.last_error}); using the fixed watchlist.</p>
+              )}
+              {picks.length > 0 && (
+                <table className="data-table compact">
+                  <thead><tr><th>Scanner pick</th><th>Why</th><th className="num">Price</th><th className="num">Today</th></tr></thead>
+                  <tbody>
+                    {picks.map((p) => (
+                      <tr key={p.symbol}>
+                        <td className="bold">{p.symbol}</td>
+                        <td className="muted">{p.source}</td>
+                        <td className="num">${p.price.toFixed(2)}</td>
+                        <td className={`num ${p.change_pct > 0 ? 'text-green' : p.change_pct < 0 ? 'text-red' : ''}`}>
+                          {p.change_pct == null ? '—' : `${p.change_pct > 0 ? '+' : ''}${p.change_pct.toFixed(1)}%`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {!picks.length && !scanner.last_error && <p className="muted small">No scanner picks yet (the market may be closed).</p>}
+              {scanner.include_watchlist && (
+                <p className="muted small">Plus your watchlist: {(scanner.watchlist || []).join(', ') || '—'}</p>
+              )}
+            </>
+          ) : (
+            <p className="muted small">
+              Fixed watchlist: {(status.symbols || []).join(', ')}. Set <code>AUTO_SCAN=true</code> to let the bot pick
+              the day's most active stocks.
+            </p>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="row-between">
+            <h3>Discord notifications</h3>
+            <button className="btn btn-sm btn-secondary" disabled={!!busy || !status.notifications}
+                    onClick={() => act('notify', botAPI.notifyTest, (d) => d.message)}>
+              {busy === 'notify' ? 'Sending…' : 'Send test'}
+            </button>
+          </div>
+          {status.notifications ? (
+            <p className="small">
+              <span className="pill pill-green">ON</span> You'll get a message for new signals, trades opened and
+              closed, problems, and a summary at the market close.
+            </p>
+          ) : (
+            <p className="muted small">
+              <span className="pill pill-gray">OFF</span> Add your Discord webhook link as{' '}
+              <code>DISCORD_WEBHOOK_URL</code> in <code>.env</code> and restart the backend. See SETUP.md.
+            </p>
           )}
         </div>
       </div>

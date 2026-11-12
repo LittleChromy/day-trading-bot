@@ -30,8 +30,15 @@ const SignalsPanel = () => {
     setNotice(null);
     try {
       const response = await signalsAPI.generate();
-      const count = response.data.count;
-      setNotice(count ? `${count} new signal(s) generated` : 'No new signals met the confidence threshold');
+      const { count, scanned = 0, no_data: noData = [] } = response.data;
+      if (scanned > 0 && noData.length === scanned) {
+        setError('Alpaca returned no market data for any stock. Check your API keys in .env and the backend log.');
+        return;
+      }
+      setNotice(
+        (count ? `${count} new signal(s) generated` : 'No new signals met the confidence threshold') +
+          ` (${scanned - noData.length} of ${scanned} stocks analyzed)`
+      );
       await fetchSignals();
       setError(null);
     } catch (err) {

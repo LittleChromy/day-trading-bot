@@ -47,6 +47,7 @@ def set_auto_trade():
             return jsonify({'status': 'error', 'message': str(e)}), 400
     bot.auto_trade = enabled
     bot.log_event('CONFIG', f"Auto-trading {'enabled' if enabled else 'disabled'} via API")
+    current_app.notifier.info(f"Auto-trading **{'enabled' if enabled else 'disabled'}** ({bot.mode} mode)")
     return jsonify({'status': 'success', 'auto_trade': bot.auto_trade}), 200
 
 
@@ -100,3 +101,21 @@ def retrain():
 def models():
     rows = MLModel.query.order_by(MLModel.created_at.desc()).limit(20).all()
     return jsonify({'status': 'success', 'models': [m.to_dict() for m in rows]}), 200
+
+
+@bot_bp.route('/universe', methods=['GET', 'POST'])
+def universe():
+    """Symbols the bot is analyzing. POST re-runs the stock scanner now."""
+    scanner = current_app.scanner
+    symbols = scanner.symbols(force=request.method == 'POST')
+    return jsonify({'status': 'success', 'symbols': symbols, 'scanner': scanner.status()}), 200
+
+
+@bot_bp.route('/notify-test', methods=['POST'])
+def notify_test():
+    """Send a test message to Discord and report whether it arrived"""
+    notifier = current_app.notifier
+    ok = notifier.send_now('🔔 **Test notification** from your Day Trading Bot. Notifications are working.')
+    if ok:
+        return jsonify({'status': 'success', 'message': 'Test message sent to Discord'}), 200
+    return jsonify({'status': 'error', 'message': notifier.last_error or 'Notification failed'}), 400

@@ -23,14 +23,17 @@ def generate():
             return jsonify({'status': 'error',
                             'message': 'Alpaca API keys are not configured; cannot fetch market data'}), 503
         data = request.get_json(silent=True) or {}
-        symbols = data.get('symbols') or current_app.config['STOCK_SYMBOLS']
+        symbols = data.get('symbols')  # omitted -> scanner picks / watchlist
         if isinstance(symbols, str):
             symbols = symbols.split(',')
         created = generate_signals(current_app, symbols)
+        scan = getattr(current_app, 'last_scan', {})
         return jsonify({
             'status': 'success',
             'signals': [s.to_dict() for s in created],
             'count': len(created),
+            'scanned': len(scan.get('symbols', [])),
+            'no_data': scan.get('no_data', []),
         }), 200
     except Exception as e:
         db.session.rollback()

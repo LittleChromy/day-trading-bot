@@ -48,6 +48,9 @@ export const botAPI = {
   events: (limit = 50) => api.get('/bot/events', { params: { limit } }),
   retrain: () => api.post('/bot/retrain'),
   models: () => api.get('/bot/models'),
+  universe: () => api.get('/bot/universe'),
+  rescan: () => api.post('/bot/universe'),
+  notifyTest: () => api.post('/bot/notify-test'),
 };
 
 export const backtestAPI = {

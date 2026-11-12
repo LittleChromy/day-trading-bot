@@ -7,6 +7,8 @@ from flask_cors import CORS
 from config import config
 from data_handler import AlpacaDataHandler
 from models import db, ensure_schema
+from notifier import DiscordNotifier
+from scanner import StockScanner
 from strategies import StrategyEngine
 from trading_engine import TradingBot
 
@@ -34,6 +36,10 @@ def create_app(config_name=None, data_handler=None, start_scheduler=None):
 
     app.data_handler = data_handler or AlpacaDataHandler()
     app.strategy_engine = StrategyEngine(min_agreeing=app.config['MIN_AGREEING_STRATEGIES'])
+    app.notifier = DiscordNotifier(app.config.get('DISCORD_WEBHOOK_URL'),
+                                   notify_signals=app.config.get('NOTIFY_SIGNALS', True),
+                                   notify_trades=app.config.get('NOTIFY_TRADES', True))
+    app.scanner = StockScanner(app)
     app.trading_bot = TradingBot(app)
 
     if not app.data_handler.configured:

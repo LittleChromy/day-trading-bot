@@ -28,21 +28,27 @@ def _predictor(app):
 def generate_signals(app, symbols=None):
     """
     Analyze each symbol and persist a Signal when confidence clears the threshold.
+    With no symbols given, uses the scanner's picks (or the fixed watchlist).
     A symbol that already produced the same signal within SIGNAL_COOLDOWN_MINUTES
     is skipped so the scheduler does not spam duplicates.
     Must be called inside an app context. Returns the list of new Signal rows.
     """
     cfg = app.config
-    symbols = [s.strip().upper() for s in (symbols or cfg['STOCK_SYMBOLS']) if s and s.strip()]
+    if not symbols:
+        scanner = getattr(app, 'scanner', None)
+        symbols = scanner.symbols() if scanner is not None else cfg['STOCK_SYMBOLS']
+    symbols = [s.strip().upper() for s in symbols if s and s.strip()]
     threshold = cfg['CONFIDENCE_THRESHOLD']
     cooldown = timedelta(minutes=cfg.get('SIGNAL_COOLDOWN_MINUTES', 30))
     predictor = _predictor(app)
     created = []
+    no_data = []
 
     for symbol in symbols:
         bars = app.data_handler.get_bars(symbol, cfg.get('BAR_TIMEFRAME'), cfg.get('BAR_LIMIT'))
         if bars is None or bars.empty:
             logger.info(f"No bar data for {symbol}")
+            no_data.append(symbol)
             continue
 
         signal_type, base_conf, details = app.strategy_engine.analyze(symbol, bars)
@@ -78,9 +84,16 @@ def generate_signals(app, symbols=None):
         created.append(signal)
 
     db.session.commit()
+    app.last_scan = {'symbols': symbols, 'no_data': no_data, 'time': datetime.utcnow().isoformat()}
+    if symbols and len(no_data) == len(symbols):
+        logger.warning("No market data for any symbol - check the Alpaca API keys and the backend log")
     if created:
         logger.info(f"Generated {len(created)} signal(s): "
                     + ', '.join(f"{s.signal_type} {s.symbol} ({s.confidence_score:.0%})" for s in created))
+        notifier = getattr(app, 'notifier', None)
+        if notifier is not None:
+            for signal in created:
+                notifier.signal(signal)
     return created
 
 

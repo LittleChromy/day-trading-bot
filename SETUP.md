@@ -72,7 +72,7 @@ Every `SIGNAL_INTERVAL` seconds (default 5 min) the scheduler runs one **bot cyc
    synced from the broker instead.
 2. **Flatten before the close** – within `FLATTEN_MINUTES_BEFORE_CLOSE` of the bell, all
    positions are closed (day trading: nothing is held overnight).
-3. **Scan** – each symbol in `STOCK_SYMBOLS` gets fresh bars (`BAR_TIMEFRAME`, default 5Min)
+3. **Scan** – each stock on the list (see *Stock scanner* below) gets fresh bars (`BAR_TIMEFRAME`, default 5Min)
    and the seven strategies vote. A signal is stored when at least
    `MIN_AGREEING_STRATEGIES` agree and the confidence clears `CONFIDENCE_THRESHOLD`.
    Repeat signals for the same symbol are suppressed for `SIGNAL_COOLDOWN_MINUTES`.
@@ -80,6 +80,33 @@ Every `SIGNAL_INTERVAL` seconds (default 5 min) the scheduler runs one **bot cyc
    the risk checks below, is sized, and opened with a stop and target attached.
 
 Every 24 h (`RETRAIN_INTERVAL_HOURS`) the ML models are retrained on closed trades.
+
+### Stock scanner
+
+With `AUTO_SCAN=true` (the default) the bot builds its own list every `SCAN_REFRESH_MINUTES`:
+
+1. Candidates: Alpaca's screener for today's **most active** stocks and biggest **gainers**
+   (and losers, only when `ALLOW_SHORTING=true`).
+2. Filters: price between `SCAN_MIN_PRICE` and `SCAN_MAX_PRICE`, today's move no larger than
+   `SCAN_MAX_MOVE_PCT`, plain common-stock symbols only, tradable on a major exchange.
+3. The top `SCAN_MAX_SYMBOLS` are analyzed, plus `STOCK_SYMBOLS` when `SCAN_INCLUDE_WATCHLIST=true`.
+
+"Best" means *active and liquid right now*: a way to find stocks worth analyzing, not a prediction
+of which will rise. If the screener can't be reached the bot falls back to `STOCK_SYMBOLS`.
+The Bot tab shows the current picks.
+
+### Discord notifications
+
+1. In Discord, create a server or pick a private channel → **Edit Channel** (gear icon) →
+   **Integrations** → **Webhooks** → **New Webhook** → **Copy Webhook URL**.
+2. Put it in `.env`: `DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...`
+3. Restart the backend: `docker compose up -d --force-recreate backend`
+4. Bot tab → **Send test**.
+
+You get a message for each new signal, trade opened, trade closed (with P&L and the reason),
+problems (no market data, rejected orders, daily loss limit hit) and a summary at the close.
+`NOTIFY_SIGNALS=false` keeps only trade messages. The webhook URL is a secret: anyone who has it
+can post to your channel.
 
 ### Confidence score
 
@@ -135,6 +162,8 @@ All responses are JSON with a `status` field.
 - `GET  /api/bot/events?limit=50` – activity log
 - `POST /api/bot/retrain` – retrain ML models now
 - `GET  /api/bot/models` – trained model versions
+- `GET  /api/bot/universe` – stocks being analyzed (`POST` re-runs the scanner)
+- `POST /api/bot/notify-test` – send a test Discord message
 
 ### Signals
 - `POST /api/signals/generate` `{"symbols": ["AAPL"]}` – scan now (symbols optional)
@@ -210,6 +239,9 @@ start its own scheduler and trade the same signals.
 | "Alpaca API keys are not configured" | Set both keys in `.env`, then `docker compose up -d --build backend` |
 | No signals ever appear | Market closed / not enough bars; try `CONFIDENCE_THRESHOLD=0.55` or `MIN_AGREEING_STRATEGIES=2`; check `docker compose logs backend` |
 | `subscription does not permit querying recent SIP data` | Set `ALPACA_DATA_FEED=iex` |
+| No Discord messages | Bot tab → **Send test** shows the reason; check `DISCORD_WEBHOOK_URL` and restart the backend |
+| "Scanner unavailable" on the Bot tab | The bot is using `STOCK_SYMBOLS` instead; see the backend log for the screener error |
+| Auto-trading is off after a restart | The Bot tab toggle lasts until restart; set `AUTO_TRADE=true` in `.env` to keep it on |
 | Bot skips signals | See the reason in `POST /api/bot/run` → `skipped`, or the Bot tab activity log |
 | Dashboard can't reach the API | `REACT_APP_API_URL` is baked in at build time; rebuild the frontend after changing it |
 

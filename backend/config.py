@@ -85,6 +85,21 @@ class Config:
     FLATTEN_MINUTES_BEFORE_CLOSE = _env_int('FLATTEN_MINUTES_BEFORE_CLOSE', 10)
     SIGNAL_COOLDOWN_MINUTES = _env_int('SIGNAL_COOLDOWN_MINUTES', 30)
 
+    # Stock scanner: pick today's most active stocks and movers automatically
+    AUTO_SCAN = _env_bool('AUTO_SCAN', True)
+    SCAN_INCLUDE_WATCHLIST = _env_bool('SCAN_INCLUDE_WATCHLIST', True)  # also analyze STOCK_SYMBOLS
+    SCAN_MAX_SYMBOLS = _env_int('SCAN_MAX_SYMBOLS', 15)
+    SCAN_CANDIDATES = _env_int('SCAN_CANDIDATES', 50)
+    SCAN_MIN_PRICE = _env_float('SCAN_MIN_PRICE', 5.0)
+    SCAN_MAX_PRICE = _env_float('SCAN_MAX_PRICE', 1000.0)
+    SCAN_MAX_MOVE_PCT = _env_float('SCAN_MAX_MOVE_PCT', 25.0)       # skip stocks already up/down more than this today
+    SCAN_REFRESH_MINUTES = _env_int('SCAN_REFRESH_MINUTES', 15)
+
+    # Notifications
+    DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL', '')
+    NOTIFY_SIGNALS = _env_bool('NOTIFY_SIGNALS', True)
+    NOTIFY_TRADES = _env_bool('NOTIFY_TRADES', True)
+
     # Machine learning
     MODEL_PATH = os.getenv('MODEL_PATH', 'model_files/')
     USE_ML_ADJUSTMENT = _env_bool('USE_ML_ADJUSTMENT', True)
@@ -104,6 +119,8 @@ class TestingConfig(Config):
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     ENABLE_SCHEDULER = False
     USE_ML_ADJUSTMENT = False
+    AUTO_SCAN = False
+    DISCORD_WEBHOOK_URL = ''
 
 
 class ProductionConfig(Config):
