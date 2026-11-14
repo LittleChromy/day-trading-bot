@@ -1,5 +1,17 @@
 # Day Trading Bot - Changelog
 
+## [1.3.0] - 2026-11-14
+
+### Added
+- Shareable dashboard: optional Cloudflare tunnel (`docker compose --profile share up -d`)
+- View-only access for visitors: state-changing API calls require `localhost` or `ADMIN_PASSWORD`
+  (`auth.py`); the dashboard hides its controls and offers Unlock/Lock
+
+### Changed
+- The dashboard reaches the API through `/api` on its own address (nginx proxy) instead of a
+  hard-coded `http://localhost:5000`, so it works from any address
+- Ports 3000, 5000 and 5432 are bound to `127.0.0.1`
+
 ## [1.2.0] - 2026-11-12
 
 ### Added

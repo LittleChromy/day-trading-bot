@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { botAPI, errorMessage } from '../api/client';
+import { useAccess } from '../access';
 
 const money = (v) => (v == null ? '—' : `${v < 0 ? '-' : ''}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 
 const BotPanel = () => {
+  const { canControl } = useAccess();
   const [status, setStatus] = useState(null);
   const [account, setAccount] = useState(null);
   const [events, setEvents] = useState([]);
@@ -71,6 +73,7 @@ const BotPanel = () => {
     <div className="bot-panel">
       <div className="panel-header">
         <h2>Trading Bot</h2>
+        {canControl && (
         <div className="row-gap wrap">
           <button className={`btn ${status.auto_trade ? 'btn-danger' : 'btn-success'}`} onClick={toggleAuto} disabled={!!busy}>
             {status.auto_trade ? 'Stop auto-trading' : 'Start auto-trading'}
@@ -82,6 +85,7 @@ const BotPanel = () => {
           </button>
           <button className="btn btn-warning" onClick={flatten} disabled={!!busy}>Flatten all</button>
         </div>
+        )}
       </div>
 
       {error && <div className="error-message">{error}</div>}
@@ -116,17 +120,17 @@ const BotPanel = () => {
             <dt>Short selling</dt><dd>{r.ALLOW_SHORTING ? 'allowed' : 'off'}</dd>
             <dt>Flatten before close</dt><dd>{r.FLATTEN_AT_CLOSE ? 'yes' : 'no'}</dd>
           </dl>
-          <p className="muted small">Change these in <code>.env</code> and restart the backend.</p>
+          {canControl && <p className="muted small">Change these in <code>.env</code> and restart the backend.</p>}
         </div>
 
         <div className="card">
           <div className="row-between">
             <h3>ML models</h3>
-            <button className="btn btn-sm btn-secondary" disabled={!!busy}
+            {canControl && <button className="btn btn-sm btn-secondary" disabled={!!busy}
                     onClick={() => act('retrain', botAPI.retrain, (d) =>
                       `Retrained: random forest ${d.trained.random_forest ? '✓' : '—'}, neural net ${d.trained.neural_network ? '✓' : '—'}`)}>
               {busy === 'retrain' ? 'Training…' : 'Retrain now'}
-            </button>
+            </button>}
           </div>
           {models.length ? (
             <table className="data-table compact">
@@ -152,7 +156,7 @@ const BotPanel = () => {
         <div className="card">
           <div className="row-between">
             <h3>Stocks being analyzed ({(status.symbols || []).length})</h3>
-            {scanner.enabled && (
+            {scanner.enabled && canControl && (
               <button className="btn btn-sm btn-secondary" disabled={!!busy}
                       onClick={() => act('rescan', botAPI.rescan, (d) => `Scanner picked ${d.scanner.scanned.length} stock(s)`)}>
                 {busy === 'rescan' ? 'Scanning…' : 'Rescan now'}
@@ -197,10 +201,10 @@ const BotPanel = () => {
         <div className="card">
           <div className="row-between">
             <h3>Discord notifications</h3>
-            <button className="btn btn-sm btn-secondary" disabled={!!busy || !status.notifications}
+            {canControl && <button className="btn btn-sm btn-secondary" disabled={!!busy || !status.notifications}
                     onClick={() => act('notify', botAPI.notifyTest, (d) => d.message)}>
               {busy === 'notify' ? 'Sending…' : 'Send test'}
-            </button>
+            </button>}
           </div>
           {status.notifications ? (
             <p className="small">

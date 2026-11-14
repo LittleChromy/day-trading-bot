@@ -1,11 +1,44 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// '/api' is relative to wherever the page was loaded from, so a shared link just works.
+// (nginx proxies it in Docker; the "proxy" entry in package.json does it for `npm start`.)
+const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 });
+
+// ---- admin password (unlocks the controls on a shared dashboard) ----
+const TOKEN_KEY = 'dtb_admin_token';
+const readToken = () => {
+  try {
+    return window.localStorage.getItem(TOKEN_KEY) || '';
+  } catch (e) {
+    return '';
+  }
+};
+let adminToken = readToken();
+
+export const setAdminToken = (token) => {
+  adminToken = token || '';
+  try {
+    if (adminToken) window.localStorage.setItem(TOKEN_KEY, adminToken);
+    else window.localStorage.removeItem(TOKEN_KEY);
+  } catch (e) {
+    /* storage unavailable: keep it in memory for this visit */
+  }
+};
+
+api.interceptors.request.use((config) => {
+  if (adminToken) config.headers['X-Admin-Token'] = adminToken;
+  return config;
+});
+
+export const authAPI = {
+  status: () => api.get('/auth/status'),
+  unlock: (password) => api.post('/auth/unlock', { password }),
+};
 
 // Pull the backend's error message out of an axios error
 export const errorMessage = (err) =>

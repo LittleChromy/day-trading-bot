@@ -95,6 +95,9 @@ class Config:
     SCAN_MAX_MOVE_PCT = _env_float('SCAN_MAX_MOVE_PCT', 25.0)       # skip stocks already up/down more than this today
     SCAN_REFRESH_MINUTES = _env_int('SCAN_REFRESH_MINUTES', 15)
 
+    # Sharing: password that unlocks the dashboard controls (see auth.py)
+    ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', '')
+
     # Notifications
     DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL', '')
     NOTIFY_SIGNALS = _env_bool('NOTIFY_SIGNALS', True)
@@ -121,6 +124,7 @@ class TestingConfig(Config):
     USE_ML_ADJUSTMENT = False
     AUTO_SCAN = False
     DISCORD_WEBHOOK_URL = ''
+    ADMIN_PASSWORD = ''
 
 
 class ProductionConfig(Config):

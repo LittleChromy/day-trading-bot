@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { signalsAPI, errorMessage } from '../api/client';
+import { useAccess } from '../access';
 
 const fmtPct = (v) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`);
 
 const SignalCard = ({ signal, onExecuted }) => {
+  const { canControl } = useAccess();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -71,10 +73,12 @@ const SignalCard = ({ signal, onExecuted }) => {
 
       {signal.acted_upon ? (
         <p className="text-green center small">✓ Trade #{signal.trade_id} opened</p>
-      ) : (
+      ) : canControl ? (
         <button className="btn btn-success full" onClick={execute} disabled={busy}>
           {busy ? 'Placing…' : 'Execute Trade'}
         </button>
+      ) : (
+        <p className="muted center small">Not traded</p>
       )}
     </div>
   );

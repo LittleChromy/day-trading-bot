@@ -28,7 +28,7 @@ services:
       DATABASE_URL: postgresql://trading_user:${POSTGRES_PASSWORD:-trading_password}@postgres:5432/day_trading_bot
       MODEL_PATH: /app/model_files/
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,12 +40,23 @@ services:
     build:
       context: ./frontend
       args:
-        REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:5000/api}
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-/api}
     container_name: day-trading-ui
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - backend
+    restart: unless-stopped
+
+  # Optional public link: docker compose --profile share up -d
+  # The address is printed in: docker compose logs tunnel
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: day-trading-tunnel
+    profiles: ["share"]
+    command: tunnel --no-autoupdate --url http://frontend:3000
+    depends_on:
+      - frontend
     restart: unless-stopped
 
 volumes:

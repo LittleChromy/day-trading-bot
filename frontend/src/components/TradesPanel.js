@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { tradesAPI, errorMessage } from '../api/client';
 import TradeTable from './TradeTable';
+import { useAccess } from '../access';
 
 const EMPTY_FORM = { symbol: '', trade_type: 'BUY', entry_price: '', quantity: '', stop_loss: '', take_profit: '' };
 
 const TradesPanel = () => {
+  const { canControl } = useAccess();
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('OPEN');
@@ -77,13 +79,15 @@ const TradesPanel = () => {
               {status}
             </button>
           ))}
-          <button className="btn btn-success" onClick={() => setShowForm((v) => !v)}>
-            {showForm ? 'Hide form' : '+ Log trade'}
-          </button>
+          {canControl && (
+            <button className="btn btn-success" onClick={() => setShowForm((v) => !v)}>
+              {showForm ? 'Hide form' : '+ Log trade'}
+            </button>
+          )}
         </div>
       </div>
 
-      {showForm && (
+      {showForm && canControl && (
         <form className="card form-grid" onSubmit={submit}>
           {field('symbol', 'Symbol', 'text', { required: true, maxLength: 10 })}
           <label className="form-field">

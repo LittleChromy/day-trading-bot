@@ -279,3 +279,8 @@ code { background: #f3f4f6; padding: 0 0.25rem; border-radius: 0.25rem; }
 .event-log li { display: flex; gap: 0.75rem; align-items: baseline; padding: 0.4rem 0; border-bottom: 1px solid #f3f4f6; }
 .event-log li > span:first-child { white-space: nowrap; }
 .chart-box { position: relative; height: 300px; }
+
+/* ---------- shared / view-only mode ---------- */
+.health-badge + .health-badge { margin-left: 0.5rem; }
+.health-badge.view-only { background: rgba(0, 0, 0, 0.25); }
+.link-button { background: none; border: none; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; margin-left: 0.5rem; padding: 0; }

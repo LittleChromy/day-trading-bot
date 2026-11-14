@@ -7,8 +7,8 @@ RUN npm install --no-audit --no-fund
 
 COPY . .
 
-# CRA bakes the API URL into the bundle at build time
-ARG REACT_APP_API_URL=http://localhost:5000/api
+# CRA bakes the API URL into the bundle at build time. '/api' is served by nginx (see nginx.conf)
+ARG REACT_APP_API_URL=/api
 ENV REACT_APP_API_URL=$REACT_APP_API_URL
 RUN npm run build
 

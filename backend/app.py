@@ -4,6 +4,7 @@ import os
 from flask import Flask, jsonify
 from flask_cors import CORS
 
+from auth import init_auth
 from config import config
 from data_handler import AlpacaDataHandler
 from models import db, ensure_schema
@@ -52,6 +53,8 @@ def create_app(config_name=None, data_handler=None, start_scheduler=None):
     app.register_blueprint(health_bp, url_prefix='/api/health')
     app.register_blueprint(bot_bp, url_prefix='/api/bot')
     app.register_blueprint(backtest_bp, url_prefix='/api/backtest')
+
+    init_auth(app)
 
     @app.errorhandler(404)
     def not_found(_):

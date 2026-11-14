@@ -1,10 +1,12 @@
 import React from 'react';
 import { tradesAPI, errorMessage } from '../api/client';
+import { useAccess } from '../access';
 
 const money = (v) => (v == null ? '—' : `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`);
 const pnlClass = (v) => (v > 0 ? 'text-green' : v < 0 ? 'text-red' : '');
 
 const TradeTable = ({ trades, onChange }) => {
+  const { canControl } = useAccess();
   const handleClose = async (trade) => {
     const managed = trade.execution_mode === 'simulated' || trade.execution_mode === 'alpaca';
     const hint = managed ? ' (leave blank to close at the market price)' : '';
@@ -83,7 +85,7 @@ const TradeTable = ({ trades, onChange }) => {
                   {t.execution_mode ? ` · ${t.execution_mode}` : ''}
                 </td>
                 <td>
-                  {t.status === 'OPEN' && (
+                  {t.status === 'OPEN' && canControl && (
                     <div className="actions">
                       <button className="btn btn-sm btn-warning" onClick={() => handleClose(t)}>Close</button>
                       {t.execution_mode !== 'alpaca' && (

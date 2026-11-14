@@ -31,7 +31,7 @@ documented in `.env.example`. The defaults are deliberately safe:
 ```
 
 - Dashboard: http://localhost:3000
-- API: http://localhost:5000/api/health/status
+- API: http://localhost:3000/api/health/status (also on port 5000)
 
 Set `INSTALL_ML=true` in `.env` before building to include TensorFlow (adds the neural-network
 model, ~600 MB). The Random Forest model works without it.
@@ -149,7 +149,32 @@ Recommended path: run `simulated` for a while → backtest and tune → `alpaca`
 - **Analytics** – win rate, P&L, cumulative P&L, P&L by symbol and a per-strategy scorecard.
 - **Backtest** – replay the strategy on historical Alpaca bars with your own stop/target/threshold.
 
-## 5. API reference
+## 5. Sharing the dashboard
+
+The dashboard and API are only reachable from the computer running them (`127.0.0.1`). To give
+other people a link:
+
+```bash
+docker compose --profile share up -d
+docker compose logs tunnel
+```
+
+The log prints an address like `https://random-words.trycloudflare.com`. Anyone with that link
+can open the dashboard. The address changes every time the tunnel restarts; stop sharing with
+`docker compose stop tunnel`.
+
+What visitors can do:
+
+| | `ADMIN_PASSWORD` empty (default) | `ADMIN_PASSWORD` set |
+|---|---|---|
+| On the bot's own computer (`localhost`) | full control | view-only until unlocked |
+| Through a shared link | **view-only**, cannot be unlocked | view-only until unlocked with the password |
+
+View-only visitors see signals, trades, analytics, the activity log and can run backtests; every
+button that changes something is hidden and the API refuses those calls. The link is not a
+secret-keeper: anyone it is forwarded to sees your trades and (simulated or real) account equity.
+
+## 6. API reference
 
 All responses are JSON with a `status` field.
 
@@ -190,10 +215,15 @@ All responses are JSON with a `status` field.
 - `POST /api/backtest/run`
   `{"symbol": "AAPL", "days": 30, "timeframe": "5Min", "overrides": {"STOP_LOSS_PCT": 1, "TAKE_PROFIT_PCT": 2, "CONFIDENCE_THRESHOLD": 0.65}}`
 
+### Auth
+- `GET  /api/auth/status` – `{password_set, control}` for the current request
+- `POST /api/auth/unlock` `{"password": "..."}` – check the admin password
+- Every non-GET call except `/api/backtest/run` needs control access (see section 5)
+
 ### Health
 - `GET /api/health/status`
 
-## 6. Strategies
+## 7. Strategies
 
 | Strategy | BUY when | SELL when | Weight |
 |---|---|---|---|
@@ -205,7 +235,7 @@ All responses are JSON with a `status` field.
 | Volume (20) | volume > 1.5× avg on an up bar | … on a down bar | 0.10 |
 | Momentum (10-bar ROC) | > 0 | < 0 | 0.10 |
 
-## 7. Machine learning
+## 8. Machine learning
 
 Each signal that becomes a closed trade is a training example (features: confidence, side,
 RSI, MACD histogram, Bollinger %B, MA spread, stochastic %K, volume ratio, momentum,
@@ -213,7 +243,7 @@ number of agreeing strategies; label: profitable or not). Training needs at leas
 trades with both wins and losses (30 for the neural network). Models are versioned in the
 `ml_models` table and stored in `MODEL_PATH`.
 
-## 8. Operations
+## 9. Operations
 
 ```bash
 docker compose logs -f backend     # bot activity, errors
@@ -225,14 +255,17 @@ docker compose down -v             # stop and DELETE all data
 Run gunicorn with **one worker** (the default in the Dockerfile): each worker would otherwise
 start its own scheduler and trade the same signals.
 
-## 9. Security
+## 10. Security
 
 - Never commit `.env`. If API keys were ever committed, regenerate them in the Alpaca dashboard.
-- The API has no authentication. Keep port 5000 on localhost or behind a VPN/reverse proxy
-  with auth — anyone who can reach it can toggle auto-trading and close positions.
+- Ports 3000 and 5000 are bound to `127.0.0.1`. Share the dashboard through the tunnel
+  (section 5) rather than opening those ports: state-changing API calls are refused unless they
+  come from `localhost` or carry `ADMIN_PASSWORD` in the `X-Admin-Token` header.
+- Reading is open to anyone with the shared link. Don't share it if you don't want your
+  trades and equity seen.
 - Change `POSTGRES_PASSWORD` and `SECRET_KEY` for anything beyond local use.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
@@ -243,7 +276,8 @@ start its own scheduler and trade the same signals.
 | "Scanner unavailable" on the Bot tab | The bot is using `STOCK_SYMBOLS` instead; see the backend log for the screener error |
 | Auto-trading is off after a restart | The Bot tab toggle lasts until restart; set `AUTO_TRADE=true` in `.env` to keep it on |
 | Bot skips signals | See the reason in `POST /api/bot/run` → `skipped`, or the Bot tab activity log |
-| Dashboard can't reach the API | `REACT_APP_API_URL` is baked in at build time; rebuild the frontend after changing it |
+| Dashboard says "API offline" | `docker compose ps` – the backend may still be starting; `docker compose logs backend` |
+| Buttons are missing | You're in view-only mode (see the badge under the title): open `http://localhost:3000` on the bot's computer, or unlock with `ADMIN_PASSWORD` |
 
 ## Disclaimer
 

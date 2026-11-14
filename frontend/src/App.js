@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import SignalsPanel from './components/SignalsPanel';
 import TradesPanel from './components/TradesPanel';
 import AnalyticsPanel from './components/AnalyticsPanel';
 import BotPanel from './components/BotPanel';
 import BacktestPanel from './components/BacktestPanel';
-import { healthAPI } from './api/client';
+import { healthAPI, authAPI, setAdminToken, errorMessage } from './api/client';
+import { AccessContext } from './access';
 import './App.css';
 
 const TABS = [
@@ -18,6 +19,37 @@ const TABS = [
 function App() {
   const [activeTab, setActiveTab] = useState('bot');
   const [health, setHealth] = useState(null);
+  const [access, setAccess] = useState({ canControl: false, passwordSet: false, loaded: false });
+
+  const refreshAccess = useCallback(
+    () =>
+      authAPI
+        .status()
+        .then((r) => setAccess({ canControl: r.data.control, passwordSet: r.data.password_set, loaded: true }))
+        .catch(() => setAccess((a) => ({ ...a, loaded: true }))),
+    []
+  );
+
+  useEffect(() => {
+    refreshAccess();
+  }, [refreshAccess]);
+
+  const unlock = async () => {
+    const password = window.prompt('Admin password:');
+    if (!password) return;
+    try {
+      await authAPI.unlock(password);
+      setAdminToken(password);
+      await refreshAccess();
+    } catch (err) {
+      window.alert(errorMessage(err));
+    }
+  };
+
+  const lock = () => {
+    setAdminToken('');
+    refreshAccess();
+  };
 
   useEffect(() => {
     const check = () =>
@@ -41,6 +73,20 @@ function App() {
             {health.auto_trade ? ' · auto-trading ON' : ''}
           </span>
         )}
+        {access.loaded && !access.canControl && (
+          <span className="health-badge view-only">
+            👁 View only
+            {access.passwordSet && (
+              <button className="link-button" onClick={unlock}>Unlock</button>
+            )}
+          </span>
+        )}
+        {access.loaded && access.canControl && access.passwordSet && (
+          <span className="health-badge">
+            🔓 Controls unlocked
+            <button className="link-button" onClick={lock}>Lock</button>
+          </span>
+        )}
       </header>
 
       <nav className="app-nav">
@@ -52,7 +98,9 @@ function App() {
       </nav>
 
       <main className="app-content">
-        <Active />
+        <AccessContext.Provider value={access}>
+          <Active />
+        </AccessContext.Provider>
       </main>
 
       <footer className="app-footer">
