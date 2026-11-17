@@ -46,13 +46,16 @@ def create_app(config_name=None, data_handler=None, start_scheduler=None):
     if not app.data_handler.configured:
         logger.warning("Alpaca API keys are not set: market data, signals and Alpaca execution are unavailable")
 
-    from api.routes import signals_bp, trades_bp, analytics_bp, health_bp, bot_bp, backtest_bp
+    from api.routes import (signals_bp, trades_bp, analytics_bp, health_bp, bot_bp, backtest_bp,
+                            account_bp, admin_bp)
     app.register_blueprint(signals_bp, url_prefix='/api/signals')
     app.register_blueprint(trades_bp, url_prefix='/api/trades')
     app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
     app.register_blueprint(health_bp, url_prefix='/api/health')
     app.register_blueprint(bot_bp, url_prefix='/api/bot')
     app.register_blueprint(backtest_bp, url_prefix='/api/backtest')
+    app.register_blueprint(account_bp, url_prefix='/api/account')
+    app.register_blueprint(admin_bp, url_prefix='/api/admin')
 
     init_auth(app)
 

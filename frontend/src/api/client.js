@@ -9,8 +9,8 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// ---- admin password (unlocks the controls on a shared dashboard) ----
-const TOKEN_KEY = 'dtb_admin_token';
+// ---- login session ----
+const TOKEN_KEY = 'dtb_session';
 const readToken = () => {
   try {
     return window.localStorage.getItem(TOKEN_KEY) || '';
@@ -18,26 +18,63 @@ const readToken = () => {
     return '';
   }
 };
-let adminToken = readToken();
+let sessionToken = readToken();
+let onLoggedOut = null;
 
-export const setAdminToken = (token) => {
-  adminToken = token || '';
+export const getSessionToken = () => sessionToken;
+
+export const setSessionToken = (token) => {
+  sessionToken = token || '';
   try {
-    if (adminToken) window.localStorage.setItem(TOKEN_KEY, adminToken);
+    if (sessionToken) window.localStorage.setItem(TOKEN_KEY, sessionToken);
     else window.localStorage.removeItem(TOKEN_KEY);
   } catch (e) {
     /* storage unavailable: keep it in memory for this visit */
   }
 };
 
+// App registers a callback so an expired session sends the user back to the login page
+export const setLoggedOutHandler = (fn) => {
+  onLoggedOut = fn;
+};
+
 api.interceptors.request.use((config) => {
-  if (adminToken) config.headers['X-Admin-Token'] = adminToken;
+  if (sessionToken) config.headers.Authorization = `Bearer ${sessionToken}`;
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401 && error.response.data?.code === 'login_required' && sessionToken) {
+      setSessionToken('');
+      if (onLoggedOut) onLoggedOut();
+    }
+    return Promise.reject(error);
+  }
+);
+
 export const authAPI = {
-  status: () => api.get('/auth/status'),
-  unlock: (password) => api.post('/auth/unlock', { password }),
+  config: () => api.get('/auth/config'),
+  login: (username, password) => api.post('/auth/login', { username, password }),
+  register: (username, password) => api.post('/auth/register', { username, password }),
+  me: () => api.get('/auth/me'),
+  changePassword: (currentPassword, newPassword) =>
+    api.put('/auth/password', { current_password: currentPassword, new_password: newPassword }),
+};
+
+export const accountAPI = {
+  settings: () => api.get('/account/settings'),
+  update: (body) => api.put('/account/settings', body),
+  reset: () => api.post('/account/reset', { confirm: 'RESET' }),
+};
+
+export const adminAPI = {
+  users: () => api.get('/admin/users'),
+  createUser: (username, password, role = 'user') => api.post('/admin/users', { username, password, role }),
+  updateUser: (id, body) => api.put(`/admin/users/${id}`, body),
+  deleteUser: (id) => api.delete(`/admin/users/${id}`),
+  setSignup: (allowed) => api.put('/admin/signup', { allowed }),
 };
 
 // Pull the backend's error message out of an axios error
@@ -78,7 +115,7 @@ export const botAPI = {
   setAutoTrade: (enabled) => api.post('/bot/auto-trade', { enabled }),
   run: () => api.post('/bot/run'),
   flatten: () => api.post('/bot/flatten'),
-  events: (limit = 50) => api.get('/bot/events', { params: { limit } }),
+  events: (limit = 50, all = false) => api.get('/bot/events', { params: { limit, ...(all ? { all: 1 } : {}) } }),
   retrain: () => api.post('/bot/retrain'),
   models: () => api.get('/bot/models'),
   universe: () => api.get('/bot/universe'),

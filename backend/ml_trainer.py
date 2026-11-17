@@ -83,8 +83,8 @@ class MLTrainer:
 
     def prepare_training_data(self):
         rows = (db.session.query(Signal, Trade)
-                .join(Trade, Signal.trade_id == Trade.id)
-                .filter(Signal.acted_upon.is_(True), Trade.status == 'CLOSED')
+                .join(Trade, Trade.signal_id == Signal.id)
+                .filter(Trade.status == 'CLOSED')
                 .all())
         X, y = [], []
         for signal, trade in rows:

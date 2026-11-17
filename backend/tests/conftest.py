@@ -132,6 +132,42 @@ def app(fake_data, tmp_path):
         db.drop_all()
 
 
+ADMIN_PASSWORD = 'admin-password-123'
+
+
+def make_user(app, username, role='user', password='user-password-123'):
+    from auth import create_user
+    with app.app_context():
+        user = create_user(username, password, role=role)
+        return user.id
+
+
+def login_client(app, username, password):
+    client = app.test_client()
+    res = client.post('/api/auth/login', json={'username': username, 'password': password})
+    assert res.status_code == 200, res.get_json()
+    client.environ_base['HTTP_AUTHORIZATION'] = 'Bearer ' + res.get_json()['token']
+    return client
+
+
 @pytest.fixture
-def client(app):
+def admin_id(app):
+    return make_user(app, 'admin', role='admin', password=ADMIN_PASSWORD)
+
+
+@pytest.fixture
+def client(app, admin_id):
+    """Logged in as the admin"""
+    return login_client(app, 'admin', ADMIN_PASSWORD)
+
+
+@pytest.fixture
+def anon(app):
     return app.test_client()
+
+
+@pytest.fixture
+def user_client(app, admin_id):
+    """Logged in as a normal user called 'alice'"""
+    make_user(app, 'alice')
+    return login_client(app, 'alice', 'user-password-123')

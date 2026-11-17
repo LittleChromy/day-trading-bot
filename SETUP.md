@@ -149,30 +149,51 @@ Recommended path: run `simulated` for a while → backtest and tune → `alpaca`
 - **Analytics** – win rate, P&L, cumulative P&L, P&L by symbol and a per-strategy scorecard.
 - **Backtest** – replay the strategy on historical Alpaca bars with your own stop/target/threshold.
 
-## 5. Sharing the dashboard
+## 5. Accounts and sharing
 
-The dashboard and API are only reachable from the computer running them (`127.0.0.1`). To give
-other people a link:
+Everyone logs in. There are two kinds of account:
+
+| | Admin | Normal user |
+|---|---|---|
+| Own bot (auto-trading switch, trades, analytics, settings) | yes | yes |
+| Money | simulated, or Alpaca when `EXECUTION_MODE=alpaca` | always simulated |
+| Sees other people's accounts | yes (Admin tab) | no |
+| Manage users, open/close sign-up | yes | no |
+| Scan now, rescan stocks, retrain models, run a cycle for everyone | yes | no |
+
+Signals are shared: the market is scanned once and every account sees the same signals.
+Each account decides what to trade with its own rules (Settings tab): minimum confidence, risk per
+trade, stop loss, take profit, max positions, daily loss limit and starting balance. A user's
+minimum confidence can only be stricter than the server's `CONFIDENCE_THRESHOLD`.
+
+**The admin account.** Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.env` before starting, or
+leave the password empty and open `http://localhost:3000` on the bot's computer: the first
+account created there becomes the admin. (An account created through a shared link never becomes
+admin.) Trades made before accounts existed are moved into the first admin account.
+
+**Forgot a password?** On the bot's computer:
+
+```bash
+docker compose exec backend python manage.py list-users
+docker compose exec backend python manage.py set-password <username>
+docker compose exec backend python manage.py make-admin <username>
+```
+
+**Sharing a link.** The dashboard and API are only reachable from the bot's computer
+(`127.0.0.1`). To give other people a link:
 
 ```bash
 docker compose --profile share up -d
 docker compose logs tunnel
 ```
 
-The log prints an address like `https://random-words.trycloudflare.com`. Anyone with that link
-can open the dashboard. The address changes every time the tunnel restarts; stop sharing with
-`docker compose stop tunnel`.
+The log prints an address like `https://random-words.trycloudflare.com`. It changes every time
+the tunnel restarts; stop sharing with `docker compose stop tunnel`. Visitors see the login
+page; with sign-up open (`ALLOW_SIGNUP`, or the checkbox in the Admin tab) they can create their
+own account, otherwise the admin creates accounts for them.
 
-What visitors can do:
-
-| | `ADMIN_PASSWORD` empty (default) | `ADMIN_PASSWORD` set |
-|---|---|---|
-| On the bot's own computer (`localhost`) | full control | view-only until unlocked |
-| Through a shared link | **view-only**, cannot be unlocked | view-only until unlocked with the password |
-
-View-only visitors see signals, trades, analytics, the activity log and can run backtests; every
-button that changes something is hidden and the API refuses those calls. The link is not a
-secret-keeper: anyone it is forwarded to sees your trades and (simulated or real) account equity.
+Logins are kept for 30 days per browser. Changing a password, or an admin disabling an account,
+logs that account out everywhere. Repeated wrong passwords are blocked for 15 minutes.
 
 ## 6. API reference
 
@@ -215,10 +236,26 @@ All responses are JSON with a `status` field.
 - `POST /api/backtest/run`
   `{"symbol": "AAPL", "days": 30, "timeframe": "5Min", "overrides": {"STOP_LOSS_PCT": 1, "TAKE_PROFIT_PCT": 2, "CONFIDENCE_THRESHOLD": 0.65}}`
 
-### Auth
-- `GET  /api/auth/status` – `{password_set, control}` for the current request
-- `POST /api/auth/unlock` `{"password": "..."}` – check the admin password
-- Every non-GET call except `/api/backtest/run` needs control access (see section 5)
+### Auth and accounts
+All endpoints except `/api/health/status`, `/api/auth/config`, `/api/auth/login` and
+`/api/auth/register` need `Authorization: Bearer <token>`. Everything is scoped to the logged-in
+user; admins can pass `?user_id=<id>` to trades and analytics endpoints to look at someone else's.
+
+- `GET  /api/auth/config` – whether sign-up is open / an admin still needs creating
+- `POST /api/auth/register` `{"username", "password"}` → `{token, user}`
+- `POST /api/auth/login` `{"username", "password"}` → `{token, user}`
+- `GET  /api/auth/me`
+- `PUT  /api/auth/password` `{"current_password", "new_password"}` → new token
+- `GET|PUT /api/account/settings` – your risk rules, starting balance, Discord webhook
+- `POST /api/account/reset` `{"confirm": "RESET"}` – start your simulated account over
+
+### Admin (admins only)
+- `GET  /api/admin/users` – every account with equity, P&L, win rate
+- `POST /api/admin/users` `{"username", "password", "role"}`
+- `PUT  /api/admin/users/<id>` `{"role"?, "is_active"?, "password"?, "auto_trade"?}`
+- `DELETE /api/admin/users/<id>` – removes the account and its trades
+- `PUT  /api/admin/signup` `{"allowed": bool}`
+- Also admin-only: `POST /api/signals/generate`, `/api/bot/run`, `/api/bot/retrain`, `POST /api/bot/universe`
 
 ### Health
 - `GET /api/health/status`
@@ -259,10 +296,11 @@ start its own scheduler and trade the same signals.
 
 - Never commit `.env`. If API keys were ever committed, regenerate them in the Alpaca dashboard.
 - Ports 3000 and 5000 are bound to `127.0.0.1`. Share the dashboard through the tunnel
-  (section 5) rather than opening those ports: state-changing API calls are refused unless they
-  come from `localhost` or carry `ADMIN_PASSWORD` in the `X-Admin-Token` header.
-- Reading is open to anyone with the shared link. Don't share it if you don't want your
-  trades and equity seen.
+  (section 5) rather than opening those ports.
+- Every API call except the health check needs a login. Passwords are stored hashed.
+- Anyone you give the link to can create an account while sign-up is open. Close it in the Admin
+  tab once everyone you invited has signed up.
+- Other users never touch your Alpaca account: their trades are simulated.
 - Change `POSTGRES_PASSWORD` and `SECRET_KEY` for anything beyond local use.
 
 ## 11. Troubleshooting
@@ -274,10 +312,10 @@ start its own scheduler and trade the same signals.
 | `subscription does not permit querying recent SIP data` | Set `ALPACA_DATA_FEED=iex` |
 | No Discord messages | Bot tab → **Send test** shows the reason; check `DISCORD_WEBHOOK_URL` and restart the backend |
 | "Scanner unavailable" on the Bot tab | The bot is using `STOCK_SYMBOLS` instead; see the backend log for the screener error |
-| Auto-trading is off after a restart | The Bot tab toggle lasts until restart; set `AUTO_TRADE=true` in `.env` to keep it on |
 | Bot skips signals | See the reason in `POST /api/bot/run` → `skipped`, or the Bot tab activity log |
 | Dashboard says "API offline" | `docker compose ps` – the backend may still be starting; `docker compose logs backend` |
-| Buttons are missing | You're in view-only mode (see the badge under the title): open `http://localhost:3000` on the bot's computer, or unlock with `ADMIN_PASSWORD` |
+| Can't log in as admin | `docker compose exec backend python manage.py set-password admin` (see section 5) |
+| Some buttons are missing | Scan Now, Run cycle, Rescan and Retrain are admin-only; normal accounts don't see them |
 
 ## Disclaimer
 

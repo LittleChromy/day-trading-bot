@@ -20,7 +20,8 @@ in a local simulated ledger or through an Alpaca paper account.
 - **Backtesting** – replay the strategy on historical bars with your own parameters.
 - **Self-learning** – a Random Forest (and optional neural network) learns which signals
   turned into winners and adjusts future confidence scores.
-- **Shareable** – one command gives you a public link; visitors get a view-only dashboard.
+- **Accounts** – an admin plus normal users, each with their own simulated bot, trades,
+  settings and analytics. One command gives you a public link to share.
 - **Dashboard** – bot control, signals, trades with live P&L, analytics, backtests.
 
 ## Quick start
@@ -50,7 +51,8 @@ backend/
   strategies/            indicators + StrategyEngine (signal scoring)
   scanner.py             picks which stocks to analyze (Alpaca screener + filters)
   notifier.py            Discord notifications
-  auth.py                view-only access for shared links, admin password
+  auth.py                logins, sessions, admin/user roles
+  manage.py              command-line password reset / admin tools
   signal_service.py      scan symbols, store signals, credit strategies after trades
   risk_manager.py        position sizing and pre-trade checks
   trading_engine.py      the bot: entries, exits, monitoring, end-of-day flatten

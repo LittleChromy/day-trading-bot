@@ -1,11 +1,19 @@
 from flask import Blueprint, jsonify, request
 from datetime import datetime, timedelta
+from auth import current_user
 from models import db, Trade, Signal, StrategyPerformance
 import logging
 
 logger = logging.getLogger(__name__)
 
 analytics_bp = Blueprint('analytics', __name__)
+
+
+def _uid():
+    """Analytics are for your own account; admins may pass ?user_id=<id>"""
+    user = current_user()
+    requested = request.args.get('user_id', type=int)
+    return requested if requested and user.is_admin else user.id
 
 @analytics_bp.route('/performance', methods=['GET'])
 def get_performance():
@@ -18,6 +26,7 @@ def get_performance():
         cutoff_time = datetime.utcnow() - timedelta(days=days)
         
         closed_trades = Trade.query.filter(
+            Trade.user_id == _uid(),
             Trade.status == 'CLOSED',
             Trade.exit_time >= cutoff_time
         ).all()
@@ -79,7 +88,7 @@ def get_performance_by_symbol():
     Get performance metrics by symbol
     """
     try:
-        closed_trades = Trade.query.filter(Trade.status == 'CLOSED').all()
+        closed_trades = Trade.query.filter(Trade.status == 'CLOSED', Trade.user_id == _uid()).all()
         
         symbol_stats = {}
         for trade in closed_trades:
@@ -127,8 +136,8 @@ def get_signal_accuracy():
     """Share of acted-upon signals whose trade closed in profit (open trades are excluded)"""
     try:
         rows = (db.session.query(Signal, Trade)
-                .join(Trade, Signal.trade_id == Trade.id)
-                .filter(Signal.acted_upon.is_(True), Trade.status == 'CLOSED')
+                .join(Trade, Trade.signal_id == Signal.id)
+                .filter(Trade.status == 'CLOSED', Trade.user_id == _uid())
                 .all())
         total = len(rows)
         accurate = sum(1 for _, t in rows if (t.profit_loss or 0) > 0)
@@ -154,7 +163,7 @@ def get_signal_accuracy():
 
 @analytics_bp.route('/strategies', methods=['GET'])
 def get_strategy_performance():
-    """Win rate of each individual strategy, aggregated across symbols"""
+    """Win rate of each individual strategy, aggregated across symbols and all accounts"""
     try:
         agg = {}
         for p in StrategyPerformance.query.all():
@@ -187,7 +196,7 @@ def get_equity_curve():
     try:
         days = request.args.get('days', 30, type=int)
         cutoff = datetime.utcnow() - timedelta(days=days)
-        trades = (Trade.query.filter(Trade.status == 'CLOSED', Trade.exit_time >= cutoff)
+        trades = (Trade.query.filter(Trade.status == 'CLOSED', Trade.exit_time >= cutoff, Trade.user_id == _uid())
                   .order_by(Trade.exit_time.asc()).all())
         running = 0.0
         points = []

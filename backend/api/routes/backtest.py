@@ -3,6 +3,7 @@ import logging
 
 from flask import Blueprint, jsonify, request, current_app
 
+from auth import current_user
 from backtester import run_backtest
 from strategies import StrategyEngine
 
@@ -33,7 +34,8 @@ def run():
     if not current_app.data_handler.configured:
         return jsonify({'status': 'error', 'message': 'Alpaca API keys are not configured'}), 503
 
-    settings = {k: current_app.config.get(k) for k in RISK_KEYS}
+    mine = current_user().settings(current_app.config)  # your own settings are the defaults
+    settings = {k: mine.get(k, current_app.config.get(k)) for k in RISK_KEYS}
     for key, value in (data.get('overrides') or {}).items():
         key = key.upper()
         if key in RISK_KEYS:

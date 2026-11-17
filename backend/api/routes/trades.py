@@ -3,6 +3,7 @@ import logging
 
 from flask import Blueprint, jsonify, request, current_app
 
+from auth import current_user
 from models import db, Trade, Signal
 from signal_service import record_trade_outcome
 from trading_engine import TradingError
@@ -19,10 +20,28 @@ def _bad(message, code=400):
     return jsonify({'status': 'error', 'message': message}), code
 
 
+def _owned_trade(trade_id):
+    """The trade if it belongs to the current user (admins may act on anyone's)"""
+    trade = db.session.get(Trade, trade_id)
+    user = current_user()
+    if trade is None or (trade.user_id != user.id and not user.is_admin):
+        return None
+    return trade
+
+
+def _scope_user_id():
+    """Whose trades to list: yourself, or (admins only) ?user_id=<id>"""
+    user = current_user()
+    requested = request.args.get('user_id', type=int)
+    if requested and user.is_admin:
+        return requested
+    return user.id
+
+
 @trades_bp.route('/create', methods=['POST'])
 def create_trade():
     """
-    Record a trade you placed yourself (journal entry, no order is sent).
+    Record a trade you placed yourself in your account (journal entry, no order is sent).
     POST body: {"symbol": "AAPL", "trade_type": "BUY", "entry_price": 150.5,
                 "quantity": 10, "signal_id": 1, "stop_loss": 148, "take_profit": 155, "notes": "..."}
     """
@@ -54,15 +73,13 @@ def create_trade():
             source='MANUAL',
             execution_mode='manual',
             notes=data.get('notes'),
+            user_id=current_user().id,
         )
-        db.session.add(trade)
-        db.session.flush()
-
         if data.get('signal_id'):
             signal = db.session.get(Signal, int(data['signal_id']))
-            if signal and not signal.acted_upon:
-                signal.trade_id = trade.id
-                signal.acted_upon = True
+            if signal and not Trade.query.filter_by(signal_id=signal.id, user_id=current_user().id).first():
+                trade.signal_id = signal.id
+        db.session.add(trade)
 
         db.session.commit()
         return jsonify({'status': 'success', 'trade_id': trade.id, 'trade': trade.to_dict(),
@@ -80,7 +97,7 @@ def close_trade(trade_id):
     PUT body: {"exit_price": 151.75}  -- omit exit_price to close at the latest market price
     Bot trades in alpaca mode are flattened at the broker.
     """
-    trade = db.session.get(Trade, trade_id)
+    trade = _owned_trade(trade_id)
     if not trade:
         return _bad('Trade not found', 404)
     if trade.status != 'OPEN':
@@ -127,7 +144,7 @@ def close_trade(trade_id):
 @trades_bp.route('/cancel/<int:trade_id>', methods=['PUT'])
 def cancel_trade(trade_id):
     """Mark an open journal trade as cancelled (e.g. entered by mistake)"""
-    trade = db.session.get(Trade, trade_id)
+    trade = _owned_trade(trade_id)
     if not trade:
         return _bad('Trade not found', 404)
     if trade.status != 'OPEN':
@@ -145,7 +162,7 @@ def cancel_trade(trade_id):
 def get_all_trades():
     """Query params: status=OPEN, symbol=AAPL, limit=50. Open trades include live unrealized P&L."""
     try:
-        query = Trade.query
+        query = Trade.query.filter_by(user_id=_scope_user_id())
         status = request.args.get('status')
         if status:
             query = query.filter_by(status=status.upper())
@@ -157,11 +174,14 @@ def get_all_trades():
 
         include_live = request.args.get('live', 'true').lower() != 'false'
         data_handler = current_app.data_handler
+        prices = {}
         result = []
         for trade in trades:
             item = trade.to_dict()
             if include_live and trade.status == 'OPEN' and data_handler.configured:
-                price = data_handler.get_latest_price(trade.symbol)
+                if trade.symbol not in prices:
+                    prices[trade.symbol] = data_handler.get_latest_price(trade.symbol)
+                price = prices[trade.symbol]
                 item['current_price'] = price
                 item['unrealized_pnl'] = trade.unrealized_pnl(price)
             result.append(item)
@@ -174,7 +194,7 @@ def get_all_trades():
 
 @trades_bp.route('/<int:trade_id>', methods=['GET'])
 def get_trade(trade_id):
-    trade = db.session.get(Trade, trade_id)
+    trade = _owned_trade(trade_id)
     if not trade:
         return _bad('Trade not found', 404)
     return jsonify({'status': 'success', 'trade': trade.to_dict()}), 200

@@ -95,8 +95,10 @@ class Config:
     SCAN_MAX_MOVE_PCT = _env_float('SCAN_MAX_MOVE_PCT', 25.0)       # skip stocks already up/down more than this today
     SCAN_REFRESH_MINUTES = _env_int('SCAN_REFRESH_MINUTES', 15)
 
-    # Sharing: password that unlocks the dashboard controls (see auth.py)
+    # Accounts (see auth.py). The admin is created from these on first start.
+    ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
     ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', '')
+    ALLOW_SIGNUP = _env_bool('ALLOW_SIGNUP', True)   # anyone with the link can create a normal account
 
     # Notifications
     DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL', '')

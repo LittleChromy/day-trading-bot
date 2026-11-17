@@ -284,3 +284,16 @@ code { background: #f3f4f6; padding: 0 0.25rem; border-radius: 0.25rem; }
 .health-badge + .health-badge { margin-left: 0.5rem; }
 .health-badge.view-only { background: rgba(0, 0, 0, 0.25); }
 .link-button { background: none; border: none; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; margin-left: 0.5rem; padding: 0; }
+
+/* ---------- accounts ---------- */
+.app-header { position: relative; }
+.user-bar { position: absolute; top: 0.75rem; right: 1rem; display: flex; gap: 0.75rem; align-items: center; font-size: 0.85rem; }
+.role-badge { margin-left: 0.4rem; padding: 0.05rem 0.45rem; border-radius: 999px; background: rgba(255,255,255,0.25); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.login-wrap { display: flex; justify-content: center; padding: 3rem 1rem; }
+.login-card { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 1rem; }
+.login-card h2 { margin: 0; color: #1f2937; }
+.link-dark { color: #667eea; }
+.grow { flex: 1; min-width: 200px; }
+@media (max-width: 768px) {
+  .user-bar { position: static; justify-content: center; margin-bottom: 0.5rem; }
+}

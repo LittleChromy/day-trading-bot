@@ -148,15 +148,16 @@ def test_retrain_with_closed_trades(app, client):
     with app.app_context():
         for i in range(24):
             win = i % 2 == 0
-            t = Trade(symbol='AAPL', trade_type='BUY', entry_price=100, exit_price=101 if win else 99,
-                      quantity=10, status='CLOSED', execution_mode='simulated')
-            t.calculate_pnl()
-            db.session.add(t)
-            db.session.flush()
             details = {'rsi': {'value': 25 if win else 60, 'signal': 'BUY'},
                        'macd': {'histogram': 0.1 if win else -0.1, 'signal': 'BUY'}}
-            db.session.add(Signal(symbol='AAPL', signal_type='BUY', confidence_score=0.7, current_price=100,
-                                  strategy_details=json.dumps(details), acted_upon=True, trade_id=t.id))
+            sig = Signal(symbol='AAPL', signal_type='BUY', confidence_score=0.7, current_price=100,
+                         strategy_details=json.dumps(details))
+            db.session.add(sig)
+            db.session.flush()
+            t = Trade(symbol='AAPL', trade_type='BUY', entry_price=100, exit_price=101 if win else 99,
+                      quantity=10, status='CLOSED', execution_mode='simulated', signal_id=sig.id)
+            t.calculate_pnl()
+            db.session.add(t)
         db.session.commit()
     res = client.post('/api/bot/retrain').get_json()
     assert res['trained']['random_forest'] is True

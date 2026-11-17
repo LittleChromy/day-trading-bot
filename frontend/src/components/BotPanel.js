@@ -5,7 +5,7 @@ import { useAccess } from '../access';
 const money = (v) => (v == null ? '—' : `${v < 0 ? '-' : ''}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 
 const BotPanel = () => {
-  const { canControl } = useAccess();
+  const { canControl, isAdmin } = useAccess();
   const [status, setStatus] = useState(null);
   const [account, setAccount] = useState(null);
   const [events, setEvents] = useState([]);
@@ -78,11 +78,13 @@ const BotPanel = () => {
           <button className={`btn ${status.auto_trade ? 'btn-danger' : 'btn-success'}`} onClick={toggleAuto} disabled={!!busy}>
             {status.auto_trade ? 'Stop auto-trading' : 'Start auto-trading'}
           </button>
-          <button className="btn btn-primary" disabled={!!busy}
-                  onClick={() => act('run', botAPI.run, (d) =>
-                    `Cycle done: ${d.summary.signals} signal(s), ${d.summary.entries.length} entr(ies), ${d.summary.exits.length} exit(s)`)}>
-            {busy === 'run' ? 'Running…' : 'Run cycle now'}
-          </button>
+          {isAdmin && (
+            <button className="btn btn-primary" disabled={!!busy}
+                    onClick={() => act('run', botAPI.run, (d) =>
+                      `Cycle done for all accounts: ${d.summary.signals} signal(s), ${d.summary.entries.length} entr(ies), ${d.summary.exits.length} exit(s)`)}>
+              {busy === 'run' ? 'Running…' : 'Run cycle now'}
+            </button>
+          )}
           <button className="btn btn-warning" onClick={flatten} disabled={!!busy}>Flatten all</button>
         </div>
         )}
@@ -90,7 +92,7 @@ const BotPanel = () => {
 
       {error && <div className="error-message">{error}</div>}
       {notice && <div className="info-message">{notice}</div>}
-      {!status.alpaca_configured && (
+      {!status.alpaca_configured && isAdmin && (
         <div className="warning-message">
           Alpaca API keys are not configured. Add them to <code>.env</code> to get market data and signals.
         </div>
@@ -120,13 +122,13 @@ const BotPanel = () => {
             <dt>Short selling</dt><dd>{r.ALLOW_SHORTING ? 'allowed' : 'off'}</dd>
             <dt>Flatten before close</dt><dd>{r.FLATTEN_AT_CLOSE ? 'yes' : 'no'}</dd>
           </dl>
-          {canControl && <p className="muted small">Change these in <code>.env</code> and restart the backend.</p>}
+          <p className="muted small">Change these in the <b>Settings</b> tab.</p>
         </div>
 
         <div className="card">
           <div className="row-between">
             <h3>ML models</h3>
-            {canControl && <button className="btn btn-sm btn-secondary" disabled={!!busy}
+            {isAdmin && <button className="btn btn-sm btn-secondary" disabled={!!busy}
                     onClick={() => act('retrain', botAPI.retrain, (d) =>
                       `Retrained: random forest ${d.trained.random_forest ? '✓' : '—'}, neural net ${d.trained.neural_network ? '✓' : '—'}`)}>
               {busy === 'retrain' ? 'Training…' : 'Retrain now'}
@@ -156,7 +158,7 @@ const BotPanel = () => {
         <div className="card">
           <div className="row-between">
             <h3>Stocks being analyzed ({(status.symbols || []).length})</h3>
-            {scanner.enabled && canControl && (
+            {scanner.enabled && isAdmin && (
               <button className="btn btn-sm btn-secondary" disabled={!!busy}
                       onClick={() => act('rescan', botAPI.rescan, (d) => `Scanner picked ${d.scanner.scanned.length} stock(s)`)}>
                 {busy === 'rescan' ? 'Scanning…' : 'Rescan now'}
@@ -208,13 +210,12 @@ const BotPanel = () => {
           </div>
           {status.notifications ? (
             <p className="small">
-              <span className="pill pill-green">ON</span> You'll get a message for new signals, trades opened and
-              closed, problems, and a summary at the market close.
+              <span className="pill pill-green">ON</span> You'll get a message when your trades open and close, and
+              a summary at the market close.
             </p>
           ) : (
             <p className="muted small">
-              <span className="pill pill-gray">OFF</span> Add your Discord webhook link as{' '}
-              <code>DISCORD_WEBHOOK_URL</code> in <code>.env</code> and restart the backend. See SETUP.md.
+              <span className="pill pill-gray">OFF</span> Add your Discord webhook link in the <b>Settings</b> tab.
             </p>
           )}
         </div>

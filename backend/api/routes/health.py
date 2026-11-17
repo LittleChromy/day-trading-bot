@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, current_app
+from flask import Blueprint, jsonify
 from sqlalchemy import text
 import logging
 
@@ -23,7 +23,4 @@ def health_status():
         'service': 'day-trading-bot-api',
         'version': '1.1.0',
         'database': 'ok' if db_ok else 'error',
-        'alpaca_configured': current_app.data_handler.configured,
-        'execution_mode': current_app.config.get('EXECUTION_MODE'),
-        'auto_trade': current_app.trading_bot.auto_trade,
     }), 200 if db_ok else 503

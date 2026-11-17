@@ -4,7 +4,7 @@ import SignalCard from './SignalCard';
 import { useAccess } from '../access';
 
 const SignalsPanel = () => {
-  const { canControl } = useAccess();
+  const { isAdmin } = useAccess();
   const [signals, setSignals] = useState([]);
   const [hours, setHours] = useState(24);
   const [loading, setLoading] = useState(false);
@@ -60,7 +60,7 @@ const SignalsPanel = () => {
             <option value={24}>Last 24 hours</option>
             <option value={168}>Last 7 days</option>
           </select>
-          {canControl && (
+          {isAdmin && (
             <button onClick={generateNewSignals} disabled={loading} className="btn btn-primary">
               {loading ? 'Scanning…' : 'Scan Now'}
             </button>

@@ -57,7 +57,7 @@ def test_disabled_notifier_sends_nothing(app, client, fake_data):
     client.post('/api/bot/auto-trade', json={'enabled': True})
     assert client.post('/api/bot/run').status_code == 200
     res = client.post('/api/bot/notify-test')
-    assert res.status_code == 400 and 'DISCORD_WEBHOOK_URL' in res.get_json()['message']
+    assert res.status_code == 400 and 'No Discord webhook' in res.get_json()['message']
     assert client.get('/api/bot/status').get_json()['bot']['notifications'] is False
 
 

@@ -1,5 +1,23 @@
 # Day Trading Bot - Changelog
 
+## [1.4.0] - 2026-11-17
+
+### Added
+- Accounts: log in / sign up, with `admin` and `user` roles. Each account has its own simulated
+  balance, trades, auto-trading switch (now saved across restarts), risk settings, analytics,
+  activity log and Discord webhook. Signals are shared.
+- Admin tab: every account's equity, P&L and win rate; create, promote, disable, delete accounts,
+  reset passwords; open or close sign-up
+- Settings tab: per-account trading rules, starting balance, Discord link, password change,
+  account reset
+- `manage.py` for password recovery from the command line
+
+### Changed
+- Replaces the view-only/`X-Admin-Token` sharing mode: every API call except the health check
+  needs a login
+- Normal accounts are always simulated; only admins trade through Alpaca
+- Trades link to signals through `trades.signal_id` (old links are migrated automatically)
+
 ## [1.3.0] - 2026-11-14
 
 ### Added

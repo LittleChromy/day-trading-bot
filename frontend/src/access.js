@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 
-// canControl: this visitor may change things (start/stop the bot, open/close trades, ...)
-export const AccessContext = createContext({ canControl: true });
+// The logged-in user. canControl: may trade their own account (every logged-in user).
+// isAdmin: may manage users and the shared bot (scanner, retraining, forced cycles).
+export const AccessContext = createContext({ user: null, isAdmin: false, canControl: true });
 
 export const useAccess = () => useContext(AccessContext);
